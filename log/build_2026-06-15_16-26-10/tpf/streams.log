@@ -1,0 +1,34 @@
+[0.509s] Invoking command in '/home/romanella/Documents/ros2_ws/src/TP_Final_Robotica': PYTHONPATH=/home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/build/tpf/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/install/tpf/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base build/tpf build --build-base /home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/build/tpf/build install --record /home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/build/tpf/install.log --single-version-externally-managed install_data
+[0.662s] running egg_info
+[0.662s] creating build/tpf/TP_Final_Robotica.egg-info
+[0.662s] writing build/tpf/TP_Final_Robotica.egg-info/PKG-INFO
+[0.663s] writing dependency_links to build/tpf/TP_Final_Robotica.egg-info/dependency_links.txt
+[0.663s] writing entry points to build/tpf/TP_Final_Robotica.egg-info/entry_points.txt
+[0.663s] writing requirements to build/tpf/TP_Final_Robotica.egg-info/requires.txt
+[0.663s] writing top-level names to build/tpf/TP_Final_Robotica.egg-info/top_level.txt
+[0.663s] writing manifest file 'build/tpf/TP_Final_Robotica.egg-info/SOURCES.txt'
+[0.663s] reading manifest file 'build/tpf/TP_Final_Robotica.egg-info/SOURCES.txt'
+[0.664s] writing manifest file 'build/tpf/TP_Final_Robotica.egg-info/SOURCES.txt'
+[0.664s] running build
+[0.664s] running build_py
+[0.664s] creating /home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/build/tpf/build
+[0.664s] creating /home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/build/tpf/build/lib
+[0.664s] creating /home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/build/tpf/build/lib/TP_Final_Robotica
+[0.664s] copying TP_Final_Robotica/gslam.py -> /home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/build/tpf/build/lib/TP_Final_Robotica
+[0.666s] copying TP_Final_Robotica/__init__.py -> /home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/build/tpf/build/lib/TP_Final_Robotica
+[0.667s] running install
+[0.667s] running install_lib
+[0.668s] creating /home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/install/tpf/lib/python3.10/site-packages/TP_Final_Robotica
+[0.669s] copying /home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/build/tpf/build/lib/TP_Final_Robotica/gslam.py -> /home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/install/tpf/lib/python3.10/site-packages/TP_Final_Robotica
+[0.669s] copying /home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/build/tpf/build/lib/TP_Final_Robotica/__init__.py -> /home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/install/tpf/lib/python3.10/site-packages/TP_Final_Robotica
+[0.669s] byte-compiling /home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/install/tpf/lib/python3.10/site-packages/TP_Final_Robotica/gslam.py to gslam.cpython-310.pyc
+[0.671s] byte-compiling /home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/install/tpf/lib/python3.10/site-packages/TP_Final_Robotica/__init__.py to __init__.cpython-310.pyc
+[0.671s] running install_data
+[0.671s] copying resource/TP_Final_Robotica -> /home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/install/tpf/share/ament_index/resource_index/packages
+[0.671s] creating /home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/install/tpf/share/TP_Final_Robotica
+[0.671s] copying package.xml -> /home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/install/tpf/share/TP_Final_Robotica
+[0.671s] running install_egg_info
+[0.672s] Copying build/tpf/TP_Final_Robotica.egg-info to /home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/install/tpf/lib/python3.10/site-packages/TP_Final_Robotica-0.0.0-py3.10.egg-info
+[0.673s] running install_scripts
+[0.688s] writing list of installed files to '/home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/build/tpf/install.log'
+[0.705s] Invoked command in '/home/romanella/Documents/ros2_ws/src/TP_Final_Robotica' returned '0': PYTHONPATH=/home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/build/tpf/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/install/tpf/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base build/tpf build --build-base /home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/build/tpf/build install --record /home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/build/tpf/install.log --single-version-externally-managed install_data
