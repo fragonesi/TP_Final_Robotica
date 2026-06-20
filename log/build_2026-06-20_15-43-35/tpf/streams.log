@@ -1,0 +1,28 @@
+[0.870s] Invoking command in '/home/franny/Documentos/UdeSA/TpFinalRobotica/TP_Final_Robotica/build/tpf': PYTHONPATH=/home/franny/Documentos/UdeSA/TpFinalRobotica/TP_Final_Robotica/build/tpf/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/franny/Documentos/UdeSA/TpFinalRobotica/TP_Final_Robotica/install/tpf/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --editable --build-directory /home/franny/Documentos/UdeSA/TpFinalRobotica/TP_Final_Robotica/build/tpf/build --no-deps symlink_data
+[1.161s] running develop
+[1.383s] running egg_info
+[1.383s] creating tpf.egg-info
+[1.383s] writing tpf.egg-info/PKG-INFO
+[1.383s] writing dependency_links to tpf.egg-info/dependency_links.txt
+[1.383s] writing entry points to tpf.egg-info/entry_points.txt
+[1.384s] writing requirements to tpf.egg-info/requires.txt
+[1.384s] writing top-level names to tpf.egg-info/top_level.txt
+[1.384s] writing manifest file 'tpf.egg-info/SOURCES.txt'
+[1.386s] reading manifest file 'tpf.egg-info/SOURCES.txt'
+[1.386s] writing manifest file 'tpf.egg-info/SOURCES.txt'
+[1.388s] running build_ext
+[1.388s] Creating /home/franny/Documentos/UdeSA/TpFinalRobotica/TP_Final_Robotica/install/tpf/lib/python3.10/site-packages/tpf.egg-link (link to .)
+[1.389s] Installing robot_node script to /home/franny/Documentos/UdeSA/TpFinalRobotica/TP_Final_Robotica/install/tpf/lib/tpf
+[1.389s] 
+[1.389s] Installed /home/franny/Documentos/UdeSA/TpFinalRobotica/TP_Final_Robotica/build/tpf
+[1.389s] running symlink_data
+[1.389s] creating /home/franny/Documentos/UdeSA/TpFinalRobotica/TP_Final_Robotica/install/tpf/share/ament_index
+[1.389s] creating /home/franny/Documentos/UdeSA/TpFinalRobotica/TP_Final_Robotica/install/tpf/share/ament_index/resource_index
+[1.390s] creating /home/franny/Documentos/UdeSA/TpFinalRobotica/TP_Final_Robotica/install/tpf/share/ament_index/resource_index/packages
+[1.390s] symbolically linking /home/franny/Documentos/UdeSA/TpFinalRobotica/TP_Final_Robotica/build/tpf/resource/tpf -> /home/franny/Documentos/UdeSA/TpFinalRobotica/TP_Final_Robotica/install/tpf/share/ament_index/resource_index/packages
+[1.390s] symbolically linking /home/franny/Documentos/UdeSA/TpFinalRobotica/TP_Final_Robotica/build/tpf/package.xml -> /home/franny/Documentos/UdeSA/TpFinalRobotica/TP_Final_Robotica/install/tpf/share/tpf
+[1.390s] creating /home/franny/Documentos/UdeSA/TpFinalRobotica/TP_Final_Robotica/install/tpf/share/tpf/launch
+[1.390s] symbolically linking /home/franny/Documentos/UdeSA/TpFinalRobotica/TP_Final_Robotica/build/tpf/launch/rviz.launch.py -> /home/franny/Documentos/UdeSA/TpFinalRobotica/TP_Final_Robotica/install/tpf/share/tpf/launch
+[1.390s] creating /home/franny/Documentos/UdeSA/TpFinalRobotica/TP_Final_Robotica/install/tpf/share/tpf/rviz
+[1.390s] symbolically linking /home/franny/Documentos/UdeSA/TpFinalRobotica/TP_Final_Robotica/build/tpf/rviz/tp_final.rviz -> /home/franny/Documentos/UdeSA/TpFinalRobotica/TP_Final_Robotica/install/tpf/share/tpf/rviz
+[1.460s] Invoked command in '/home/franny/Documentos/UdeSA/TpFinalRobotica/TP_Final_Robotica/build/tpf' returned '0': PYTHONPATH=/home/franny/Documentos/UdeSA/TpFinalRobotica/TP_Final_Robotica/build/tpf/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/franny/Documentos/UdeSA/TpFinalRobotica/TP_Final_Robotica/install/tpf/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --editable --build-directory /home/franny/Documentos/UdeSA/TpFinalRobotica/TP_Final_Robotica/build/tpf/build --no-deps symlink_data

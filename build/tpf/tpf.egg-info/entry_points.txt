@@ -1,0 +1,3 @@
+[console_scripts]
+robot_node = tpf.robot:main
+

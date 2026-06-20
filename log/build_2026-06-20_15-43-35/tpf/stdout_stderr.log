@@ -1,0 +1,26 @@
+running develop
+running egg_info
+creating tpf.egg-info
+writing tpf.egg-info/PKG-INFO
+writing dependency_links to tpf.egg-info/dependency_links.txt
+writing entry points to tpf.egg-info/entry_points.txt
+writing requirements to tpf.egg-info/requires.txt
+writing top-level names to tpf.egg-info/top_level.txt
+writing manifest file 'tpf.egg-info/SOURCES.txt'
+reading manifest file 'tpf.egg-info/SOURCES.txt'
+writing manifest file 'tpf.egg-info/SOURCES.txt'
+running build_ext
+Creating /home/franny/Documentos/UdeSA/TpFinalRobotica/TP_Final_Robotica/install/tpf/lib/python3.10/site-packages/tpf.egg-link (link to .)
+Installing robot_node script to /home/franny/Documentos/UdeSA/TpFinalRobotica/TP_Final_Robotica/install/tpf/lib/tpf
+
+Installed /home/franny/Documentos/UdeSA/TpFinalRobotica/TP_Final_Robotica/build/tpf
+running symlink_data
+creating /home/franny/Documentos/UdeSA/TpFinalRobotica/TP_Final_Robotica/install/tpf/share/ament_index
+creating /home/franny/Documentos/UdeSA/TpFinalRobotica/TP_Final_Robotica/install/tpf/share/ament_index/resource_index
+creating /home/franny/Documentos/UdeSA/TpFinalRobotica/TP_Final_Robotica/install/tpf/share/ament_index/resource_index/packages
+symbolically linking /home/franny/Documentos/UdeSA/TpFinalRobotica/TP_Final_Robotica/build/tpf/resource/tpf -> /home/franny/Documentos/UdeSA/TpFinalRobotica/TP_Final_Robotica/install/tpf/share/ament_index/resource_index/packages
+symbolically linking /home/franny/Documentos/UdeSA/TpFinalRobotica/TP_Final_Robotica/build/tpf/package.xml -> /home/franny/Documentos/UdeSA/TpFinalRobotica/TP_Final_Robotica/install/tpf/share/tpf
+creating /home/franny/Documentos/UdeSA/TpFinalRobotica/TP_Final_Robotica/install/tpf/share/tpf/launch
+symbolically linking /home/franny/Documentos/UdeSA/TpFinalRobotica/TP_Final_Robotica/build/tpf/launch/rviz.launch.py -> /home/franny/Documentos/UdeSA/TpFinalRobotica/TP_Final_Robotica/install/tpf/share/tpf/launch
+creating /home/franny/Documentos/UdeSA/TpFinalRobotica/TP_Final_Robotica/install/tpf/share/tpf/rviz
+symbolically linking /home/franny/Documentos/UdeSA/TpFinalRobotica/TP_Final_Robotica/build/tpf/rviz/tp_final.rviz -> /home/franny/Documentos/UdeSA/TpFinalRobotica/TP_Final_Robotica/install/tpf/share/tpf/rviz
