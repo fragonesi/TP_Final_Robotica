@@ -6,6 +6,9 @@ resource/tpf
 rviz/tp_final.rviz
 tpf/__init__.py
 tpf/gslam.py
+tpf/likelihood_field.py
+tpf/localization_node.py
+tpf/particle_filter.py
 tpf/robot.py
 tpf.egg-info/PKG-INFO
 tpf.egg-info/SOURCES.txt

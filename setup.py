@@ -28,6 +28,8 @@ setup(
     entry_points={
         'console_scripts': [
             'robot_node = tpf.robot:main',
+            'localization_node = tpf.localization_node:main', 
+            'likelihood_field_node = tpf.likelihood_field:main',
         ],
     },
 )
