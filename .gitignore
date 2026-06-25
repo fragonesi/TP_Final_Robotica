@@ -1,0 +1,23 @@
+# --- Rosbags (descargar aparte, no entran a git) ---
+# El bag del laberinto pesa ~8 GB y el corto (aruco_estimation) ~184 MB:
+# superan el límite de archivo de GitHub (100 MB). Se versiona solo el
+# metadata.yaml como referencia de dónde va cada bag.
+*.db3
+*.mcap
+
+# --- Artefactos de compilación de colcon ---
+build/
+install/
+log/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# --- Comprimidos (se comparten por fuera de git) ---
+*.zip
+
+# --- Gráficos de diagnóstico generados por los scripts ---
+noise_model_fit.png
+odom_trajectory.png

@@ -1,27 +1,27 @@
 # Estado del proyecto — Parte A (Opción 3)
 
 > Actualización de avances y handoff. Última actualización: 2026-06-25.
-> Este repo (`TP_Final_Robotica`) contiene la parte de **GraphSLAM**. La detección
-> ArUco, la odometría y el modelo de ruido viven en el paquete hermano `aruco_pkg`
-> (Parte A de percepción), que se comparte aparte.
+> Este repo contiene el workspace completo de la Parte A bajo `src/`:
+> `src/aruco_pkg` (percepción ArUco, odometría y modelo de ruido) y
+> `src/TP_Final_Robotica` (**GraphSLAM**).
 
 ## Avances realizados
 
 - **Rosbag**: configurado y reproduciéndose correctamente (`ros2 bag play`).
-- **Percepción + odometría** (en `aruco_pkg`): detección de marcadores ArUco
+- **Percepción + odometría** (en `src/aruco_pkg`): detección de marcadores ArUco
   (`aruco_detector_node`) y registro de odometría con el modelo de deltas
   `(δrot1, δtrans, δrot2)` (`odom_delta_node`) ya funcionando.
 - **Exportación a CSV y gráficos**: el bag del laberinto dura ~24 min, así que se
   dejó procesando para no correrlo de cero cada vez. Los CSV ya generados quedan
-  versionados en `aruco_pkg` (`aruco_detections.csv`, `odom_deltas.csv`).
+  versionados en `src/aruco_pkg` (`aruco_detections.csv`, `odom_deltas.csv`).
 - **Bugs resueltos**: funcionamiento interno y, sobre todo, el diccionario ArUco.
   El correcto es **`DICT_4X4_50`** (no `DICT_5X5_250`, que detectaba candidatos
-  pero no decodificaba ningún ID). Detalle completo en `TpParteA.md` de `aruco_pkg`.
+  pero no decodificaba ningún ID). Detalle completo en `TpParteA.md` (raíz del repo).
 
 ## Siguientes pasos
 
 - **Implementar GraphSLAM** apoyándose en la base de odometría que ya funciona.
-  El borrador está en [`gslam.py`](TP_Final_Robotica/gslam.py); hoy **no es
+  El borrador está en [`gslam.py`](src/TP_Final_Robotica/TP_Final_Robotica/gslam.py); hoy **no es
   ejecutable ni está integrado** (faltan imports, usa un mensaje `ArucoDetection`
   que aún no existe, y espera observaciones range-bearing mientras el detector
   entrega pose 3D cartesiana). Recordar que la consigna exige **loop closure**.
