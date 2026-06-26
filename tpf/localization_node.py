@@ -5,6 +5,7 @@ import numpy as np
 from nav_msgs.msg import OccupancyGrid, Odometry
 from sensor_msgs.msg import LaserScan
 from geometry_msgs.msg import PoseArray, Pose, PoseWithCovarianceStamped, Quaternion
+from rclpy.qos import QoSProfile, QoSDurabilityPolicy
 from tf2_ros import TransformBroadcaster
 from geometry_msgs.msg import TransformStamped
 
@@ -32,15 +33,18 @@ class LocalizationNode(Node):
         self.pf = RobotFunctions(num_particles=50)
         self.map = None
         self.likelihood = None
-        self.last_odom = None
+        self.last_calc_odom = None
+        
+        qos_map = QoSProfile(depth=1, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
 
-        self.create_subscription(OccupancyGrid, '/map', self.map_callback, 10)
-        self.create_subscription(OccupancyGrid, '/likelihood_map', self.likelihood_callback, 10)
+        self.create_subscription(OccupancyGrid, '/map', self.map_callback, qos_map)
+        self.create_subscription(OccupancyGrid, '/likelihood_map', self.likelihood_callback, qos_map)
         self.create_subscription(PoseWithCovarianceStamped, '/initialpose', self.initialpose_callback, 10)
-        self.create_subscription(Odometry, '/odom', self.odom_callback, 10)
+        self.create_subscription(Odometry, '/calc_odom', self.odom_callback, 10)
         self.create_subscription(LaserScan, '/scan', self.scan_callback, 10)
         self.belief_pub = self.create_publisher(PoseArray, '/belief', 10)
         self.tf_broadcaster = TransformBroadcaster(self)
+
 
     def map_callback(self,msg):
         self.map = msg
@@ -66,22 +70,22 @@ class LocalizationNode(Node):
         self.get_logger().info(f'Primera particula: {self.pf.particles[0].x}, {self.pf.particles[0].y}')
 
     def odom_callback(self,msg):
-        if self.last_odom is None:
-            self.last_odom = msg
+        if self.last_calc_odom is None:
+            self.last_calc_odom = msg
             return
         
         x = msg.pose.pose.position.x
         y = msg.pose.pose.position.y
 
-        last_x = self.last_odom.pose.pose.position.x
-        last_y = self.last_odom.pose.pose.position.y
+        last_x = self.last_calc_odom.pose.pose.position.x
+        last_y = self.last_calc_odom.pose.pose.position.y
 
         dx = x - last_x
         dy = y - last_y
 
         delta_t = np.sqrt(dx**2 + dy**2)
         yaw = get_yaw(msg.pose.pose.orientation)
-        last_yaw = get_yaw(self.last_odom.pose.pose.orientation)
+        last_yaw = get_yaw(self.last_calc_odom.pose.pose.orientation)
 
         # delta_rot1 = yaw - last_yaw
         # delta_rot2 = 0
@@ -91,7 +95,7 @@ class LocalizationNode(Node):
 
         odom = {'r1':delta_rot1, 'r2':delta_rot2, 't':delta_t}
         self.pf.move_particles(odom)
-        self.last_odom = msg
+        self.last_calc_odom = msg
 
     def scan_callback(self,msg):
         self.get_logger().info("Llegó scan")
@@ -131,7 +135,7 @@ class LocalizationNode(Node):
         tf = TransformStamped()
         tf.header.stamp = self.get_clock().now().to_msg()
         tf.header.frame_id = "map"
-        tf.child_frame_id = "odom"
+        tf.child_frame_id = "calc_odom"
 
         tf.transform.translation.x = x
         tf.transform.translation.y = y

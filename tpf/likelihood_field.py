@@ -3,21 +3,17 @@ from rclpy.node import Node
 from nav_msgs.msg import OccupancyGrid
 import numpy as np
 from scipy.ndimage import distance_transform_edt
+from rclpy.qos import QoSProfile, QoSDurabilityPolicy, QoSReliabilityPolicy
 
 
 class LikelihoodMapPublisher(Node):
     def __init__(self):
         super().__init__('likelihood_map_publisher')
-        qos = rclpy.qos.QoSProfile(depth=1)
-        qos.durability = rclpy.qos.QoSDurabilityPolicy.TRANSIENT_LOCAL
-        qos.reliability = rclpy.qos.QoSReliabilityPolicy.RELIABLE
-        self.pub = self.create_publisher(OccupancyGrid, '/likelihood_map', qos)
-        self.sub = self.create_subscription(
-            OccupancyGrid,
-            '/map',
-            self.map_callback,
-            qos
-        )
+        qos_map = QoSProfile(depth=1)
+        qos_map.durability = QoSDurabilityPolicy.TRANSIENT_LOCAL
+        qos_map.reliability = QoSReliabilityPolicy.RELIABLE
+        self.pub = self.create_publisher(OccupancyGrid, '/likelihood_map', qos_map)
+        self.create_subscription(OccupancyGrid, '/map', self.map_callback, qos_map)
 
     def map_callback(self, msg):
 

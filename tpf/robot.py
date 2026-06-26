@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Nodo de navegación autónoma - Esqueleto con máquina de estados.
-Estados: LOCALIZING → WAITING → PLANNING → WALKING → AVOIDING → ALIGNING → LOCALIZING/WAITING
+Estados: WAITING → PLANNING → WALKING → AVOIDING → ALIGNING → WAITING
 """
 import heapq
 import math
@@ -22,7 +22,6 @@ from sensor_msgs.msg import LaserScan
 # ---------------------------------------------------------------------------
 
 class State(Enum):
-    LOCALIZING = auto()   # El robot se localiza en el mapa (inicio o si se perdió)
     WAITING    = auto()   # Espera un goal
     PLANNING   = auto()   # Planifica el camino con Theta*
     WALKING    = auto()   # Sigue el path planificado
@@ -40,7 +39,7 @@ class RobotNavigator(Node):
         super().__init__('robot_navigator')
 
         # Estado inicial ---------
-        self.state = State.LOCALIZING
+        self.state = State.WAITING
         self.get_logger().info(f'Estado inicial: {self.state.name}')
 
         # Variables internas ---------
@@ -146,9 +145,16 @@ class RobotNavigator(Node):
     # Loop principal de la máquina de estados -----------------------------------------------------------------
 
     def state_machine_loop(self):
+
+        if not self._localization_ok():
+            self._stop_robot()
+            self.get_logger().warn(
+                f'Localización no confiable. Robot detenido. '
+                f'Estado en espera: {self.state.name}.',
+                throttle_duration_sec=2.0)
+            return
+
         match self.state:
-            case State.LOCALIZING:
-                self.run_localizing() # Franny
             case State.WAITING:
                 self.run_waiting()
             case State.PLANNING:
@@ -162,24 +168,15 @@ class RobotNavigator(Node):
 
     # Implementación de cada estado -----------------------------------------------------------------------
 
-    def run_localizing(self):
+    def _localization_ok(self) -> bool:
         """
-        El robot se localiza en el mapa usando AMCL / partículas / EKF.
-        Puede ser la localización inicial o una re-localización si se perdió.
-        Transición → WAITING cuando la localización converge o a PLANNING si hay un goal pendiente.
-        """
-        # TODO: verificar convergencia del filtro (e.g. varianza de partículas < umbral)
-        localization_converged = self._check_localization_converged()
+        Guard global de localización.
 
-        if localization_converged:
-            if self.goal_pose is not None:
-                self.get_logger().info(
-                    'Localización convergida. Goal pendiente detectado. Pasando a PLANNING para recalcular.')
-                self.transition_to(State.PLANNING)
-            else:
-                self.get_logger().info(
-                    'Localización convergida. Sin goal pendiente. Pasando a WAITING.')
-                self.transition_to(State.WAITING)
+        True solo si la localización es confiable: el filtro convergió Y no está degradado.
+        False: el loop frena el robot y no ejecuta el estado actual.
+        """
+        return (self._check_localization_converged()
+                and not self._localization_degraded())
 
     def run_waiting(self):
         """
@@ -213,24 +210,14 @@ class RobotNavigator(Node):
             self.get_logger().warn('No se encontró camino. Volviendo a WAITING.')
             self.transition_to(State.WAITING)
 
-    # *** ACA
     def run_walking(self):
         """
         Sigue el path planificado con Pure Pursuit (u otro controlador).
         Transiciones:
-          → LOCALIZING  si la localización se degrada durante el recorrido.
           → ALIGNING  si llegó al goal
           → AVOIDING  si detecta obstáculo no mapeado en el camino
           → PLANNING  si llega un goal nuevo
         """
-        # Prioridad 0: localización degradada
-        if self._localization_degraded():
-            self.get_logger().warn(
-                'Localización degradada durante WALKING. Pasando a LOCALIZING.')
-            self._stop_robot()
-            self.transition_to(State.LOCALIZING)
-            return
-
         # Prioridad 1: nuevo goal → re-planear
         if self.new_goal_received:
             self.new_goal_received = False
@@ -262,32 +249,24 @@ class RobotNavigator(Node):
         Esquiva un obstáculo no mapeado.
         Luego verifica si el próximo waypoint del path original sigue siendo
         alcanzable (line-of-sight libre).
-        Transición → WALKING   si el waypoint sigue alcanzable.
-        Transición → PLANNING  si el path original quedó bloqueado.
+        Transición → PLANNING.
         """
         avoidance_done = self._execute_avoidance_maneuver()
 
         if avoidance_done:
-            if self._next_waypoint_reachable():
-                self.get_logger().info('Waypoint alcanzable. Retomando WALKING.')
-                self.transition_to(State.WALKING)
-            else:
-                self.get_logger().info('Path bloqueado. Re-planeando. Pasando a PLANNING.')
+                self.get_logger().info('Re-planeando. Pasando a PLANNING.')
                 self.transition_to(State.PLANNING)
 
     def run_aligning(self):
         """
         Alinea el robot al ángulo final del goal.
-        Transición → LOCALIZING si la localización se degradó durante el recorrido.
+        Transición → PLANNING  si llega un goal nuevo durante la alineación.
         Transición → WAITING    si la alineación terminó correctamente.
         """
         alignment_done = self._align_to_goal_angle()
 
         if alignment_done:
             self._stop_robot()
-            if self._localization_degraded():
-                self.get_logger().info('Localización degradada. Pasando a LOCALIZING.')
-                self.transition_to(State.LOCALIZING)
             if self.new_goal_received:
                 self.new_goal_received = False
                 self.get_logger().info('Nuevo goal durante ALIGNING. Pasando a PLANNING.')
@@ -623,53 +602,6 @@ class RobotNavigator(Node):
     def _execute_avoidance_maneuver(self) -> bool:
         """TODO: lógica de evasión local. Retorna True cuando terminó. (Tpf0)"""
         return False
-
-    def _next_waypoint_reachable(self) -> bool:
-        """
-        Verifica si, desde la pose actual del robot, hay línea de visión
-        libre (sobre el mapa inflado) hacia el waypoint actual del path
-        original.
-
-        Se usa al salir de AVOIDING: si el desvío para evitar el obstáculo
-        no mapeado deja el siguiente waypoint visible, alcanza con retomar
-        WALKING sin replanificar. Si quedó bloqueado, hay que ir a PLANNING.
-
-        Retorna True si hay línea de visión libre, False si no.
-        """
-        if (self.current_pose is None
-                or self.inflated_map is None
-                or not self.planned_path
-                or self.current_waypoint_idx >= len(self.planned_path)):
-            # Sin datos suficientes para decidir → más seguro replanificar
-            return False
-
-        # Convertir pose actual a celda de grilla
-        rx = self.current_pose.pose.position.x
-        ry = self.current_pose.pose.position.y
-        current_cell = self._world_to_grid(rx, ry, self.inflated_map)
-
-        if current_cell is None:
-            self.get_logger().warn(
-                '_next_waypoint_reachable: pose actual fuera del mapa.')
-            return False
-
-        # Convertir el waypoint objetivo a celda de grilla
-        target_wp = self.planned_path[self.current_waypoint_idx]
-        tx = target_wp.pose.position.x
-        ty = target_wp.pose.position.y
-        target_cell = self._world_to_grid(tx, ty, self.inflated_map)
-
-        if target_cell is None:
-            self.get_logger().warn(
-                '_next_waypoint_reachable: waypoint objetivo fuera del mapa.')
-            return False
-
-        r0, c0 = current_cell
-        r1, c1 = target_cell
-
-        # Reutiliza el mismo Bresenham que usa Theta* para construir el path
-        return self._line_of_sight(self.inflated_map, r0, c0, r1, c1)
-
 
     def _align_to_goal_angle(self) -> bool:
         """

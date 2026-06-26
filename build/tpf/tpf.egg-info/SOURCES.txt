@@ -8,6 +8,7 @@ tpf/__init__.py
 tpf/gslam.py
 tpf/likelihood_field.py
 tpf/localization_node.py
+tpf/map_publisher.py
 tpf/particle_filter.py
 tpf/robot.py
 tpf.egg-info/PKG-INFO
