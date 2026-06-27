@@ -1,0 +1,56 @@
+[0.683s] Invoking command in '/home/franny/Documentos/UdeSA/TP_Final_Robotica/build/tpf': PYTHONPATH=/home/franny/Documentos/UdeSA/TP_Final_Robotica/build/tpf/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/franny/Documentos/UdeSA/TP_Final_Robotica/install/tpf/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --uninstall --editable --build-directory /home/franny/Documentos/UdeSA/TP_Final_Robotica/build/tpf/build
+[0.961s] running develop
+[1.170s] Removing /home/franny/Documentos/UdeSA/TP_Final_Robotica/install/tpf/lib/python3.10/site-packages/tpf.egg-link (link to .)
+[1.238s] Invoked command in '/home/franny/Documentos/UdeSA/TP_Final_Robotica/build/tpf' returned '0': PYTHONPATH=/home/franny/Documentos/UdeSA/TP_Final_Robotica/build/tpf/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/franny/Documentos/UdeSA/TP_Final_Robotica/install/tpf/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --uninstall --editable --build-directory /home/franny/Documentos/UdeSA/TP_Final_Robotica/build/tpf/build
+[1.240s] Invoking command in '/home/franny/Documentos/UdeSA/TP_Final_Robotica': PYTHONPATH=/home/franny/Documentos/UdeSA/TP_Final_Robotica/build/tpf/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/franny/Documentos/UdeSA/TP_Final_Robotica/install/tpf/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base build/tpf build --build-base /home/franny/Documentos/UdeSA/TP_Final_Robotica/build/tpf/build install --record /home/franny/Documentos/UdeSA/TP_Final_Robotica/build/tpf/install.log --single-version-externally-managed install_data --force
+[1.496s] running egg_info
+[1.497s] writing build/tpf/tpf.egg-info/PKG-INFO
+[1.497s] writing dependency_links to build/tpf/tpf.egg-info/dependency_links.txt
+[1.497s] writing entry points to build/tpf/tpf.egg-info/entry_points.txt
+[1.497s] writing requirements to build/tpf/tpf.egg-info/requires.txt
+[1.497s] writing top-level names to build/tpf/tpf.egg-info/top_level.txt
+[1.500s] reading manifest file 'build/tpf/tpf.egg-info/SOURCES.txt'
+[1.501s] writing manifest file 'build/tpf/tpf.egg-info/SOURCES.txt'
+[1.501s] running build
+[1.501s] running build_py
+[1.501s] creating /home/franny/Documentos/UdeSA/TP_Final_Robotica/build/tpf/build
+[1.501s] creating /home/franny/Documentos/UdeSA/TP_Final_Robotica/build/tpf/build/lib
+[1.501s] creating /home/franny/Documentos/UdeSA/TP_Final_Robotica/build/tpf/build/lib/tpf
+[1.501s] copying tpf/robot.py -> /home/franny/Documentos/UdeSA/TP_Final_Robotica/build/tpf/build/lib/tpf
+[1.502s] copying tpf/particle_filter.py -> /home/franny/Documentos/UdeSA/TP_Final_Robotica/build/tpf/build/lib/tpf
+[1.502s] copying tpf/map_publisher.py -> /home/franny/Documentos/UdeSA/TP_Final_Robotica/build/tpf/build/lib/tpf
+[1.502s] copying tpf/likelihood_field.py -> /home/franny/Documentos/UdeSA/TP_Final_Robotica/build/tpf/build/lib/tpf
+[1.502s] copying tpf/localization_node.py -> /home/franny/Documentos/UdeSA/TP_Final_Robotica/build/tpf/build/lib/tpf
+[1.502s] copying tpf/__init__.py -> /home/franny/Documentos/UdeSA/TP_Final_Robotica/build/tpf/build/lib/tpf
+[1.502s] copying tpf/gslam.py -> /home/franny/Documentos/UdeSA/TP_Final_Robotica/build/tpf/build/lib/tpf
+[1.502s] running install
+[1.502s] running install_lib
+[1.503s] creating /home/franny/Documentos/UdeSA/TP_Final_Robotica/install/tpf/lib/python3.10/site-packages/tpf
+[1.503s] copying /home/franny/Documentos/UdeSA/TP_Final_Robotica/build/tpf/build/lib/tpf/robot.py -> /home/franny/Documentos/UdeSA/TP_Final_Robotica/install/tpf/lib/python3.10/site-packages/tpf
+[1.503s] copying /home/franny/Documentos/UdeSA/TP_Final_Robotica/build/tpf/build/lib/tpf/particle_filter.py -> /home/franny/Documentos/UdeSA/TP_Final_Robotica/install/tpf/lib/python3.10/site-packages/tpf
+[1.503s] copying /home/franny/Documentos/UdeSA/TP_Final_Robotica/build/tpf/build/lib/tpf/map_publisher.py -> /home/franny/Documentos/UdeSA/TP_Final_Robotica/install/tpf/lib/python3.10/site-packages/tpf
+[1.503s] copying /home/franny/Documentos/UdeSA/TP_Final_Robotica/build/tpf/build/lib/tpf/likelihood_field.py -> /home/franny/Documentos/UdeSA/TP_Final_Robotica/install/tpf/lib/python3.10/site-packages/tpf
+[1.504s] copying /home/franny/Documentos/UdeSA/TP_Final_Robotica/build/tpf/build/lib/tpf/localization_node.py -> /home/franny/Documentos/UdeSA/TP_Final_Robotica/install/tpf/lib/python3.10/site-packages/tpf
+[1.504s] copying /home/franny/Documentos/UdeSA/TP_Final_Robotica/build/tpf/build/lib/tpf/__init__.py -> /home/franny/Documentos/UdeSA/TP_Final_Robotica/install/tpf/lib/python3.10/site-packages/tpf
+[1.504s] copying /home/franny/Documentos/UdeSA/TP_Final_Robotica/build/tpf/build/lib/tpf/gslam.py -> /home/franny/Documentos/UdeSA/TP_Final_Robotica/install/tpf/lib/python3.10/site-packages/tpf
+[1.504s] byte-compiling /home/franny/Documentos/UdeSA/TP_Final_Robotica/install/tpf/lib/python3.10/site-packages/tpf/robot.py to robot.cpython-310.pyc
+[1.508s] byte-compiling /home/franny/Documentos/UdeSA/TP_Final_Robotica/install/tpf/lib/python3.10/site-packages/tpf/particle_filter.py to particle_filter.cpython-310.pyc
+[1.509s] byte-compiling /home/franny/Documentos/UdeSA/TP_Final_Robotica/install/tpf/lib/python3.10/site-packages/tpf/map_publisher.py to map_publisher.cpython-310.pyc
+[1.509s] byte-compiling /home/franny/Documentos/UdeSA/TP_Final_Robotica/install/tpf/lib/python3.10/site-packages/tpf/likelihood_field.py to likelihood_field.cpython-310.pyc
+[1.509s] byte-compiling /home/franny/Documentos/UdeSA/TP_Final_Robotica/install/tpf/lib/python3.10/site-packages/tpf/localization_node.py to localization_node.cpython-310.pyc
+[1.510s] byte-compiling /home/franny/Documentos/UdeSA/TP_Final_Robotica/install/tpf/lib/python3.10/site-packages/tpf/__init__.py to __init__.cpython-310.pyc
+[1.510s] byte-compiling /home/franny/Documentos/UdeSA/TP_Final_Robotica/install/tpf/lib/python3.10/site-packages/tpf/gslam.py to gslam.cpython-310.pyc
+[1.512s] running install_data
+[1.512s] copying resource/tpf -> /home/franny/Documentos/UdeSA/TP_Final_Robotica/install/tpf/share/ament_index/resource_index/packages
+[1.512s] copying package.xml -> /home/franny/Documentos/UdeSA/TP_Final_Robotica/install/tpf/share/tpf
+[1.512s] copying launch/rviz.launch.py -> /home/franny/Documentos/UdeSA/TP_Final_Robotica/install/tpf/share/tpf/launch
+[1.513s] copying rviz/tp_final.rviz -> /home/franny/Documentos/UdeSA/TP_Final_Robotica/install/tpf/share/tpf/rviz
+[1.513s] running install_egg_info
+[1.515s] Copying build/tpf/tpf.egg-info to /home/franny/Documentos/UdeSA/TP_Final_Robotica/install/tpf/lib/python3.10/site-packages/tpf-0.0.0-py3.10.egg-info
+[1.515s] running install_scripts
+[1.535s] Installing likelihood_field_node script to /home/franny/Documentos/UdeSA/TP_Final_Robotica/install/tpf/lib/tpf
+[1.535s] Installing localization_node script to /home/franny/Documentos/UdeSA/TP_Final_Robotica/install/tpf/lib/tpf
+[1.535s] Installing map_publisher script to /home/franny/Documentos/UdeSA/TP_Final_Robotica/install/tpf/lib/tpf
+[1.535s] Installing robot_node script to /home/franny/Documentos/UdeSA/TP_Final_Robotica/install/tpf/lib/tpf
+[1.536s] writing list of installed files to '/home/franny/Documentos/UdeSA/TP_Final_Robotica/build/tpf/install.log'
+[1.566s] Invoked command in '/home/franny/Documentos/UdeSA/TP_Final_Robotica' returned '0': PYTHONPATH=/home/franny/Documentos/UdeSA/TP_Final_Robotica/build/tpf/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/franny/Documentos/UdeSA/TP_Final_Robotica/install/tpf/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py egg_info --egg-base build/tpf build --build-base /home/franny/Documentos/UdeSA/TP_Final_Robotica/build/tpf/build install --record /home/franny/Documentos/UdeSA/TP_Final_Robotica/build/tpf/install.log --single-version-externally-managed install_data --force

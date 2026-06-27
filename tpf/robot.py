@@ -10,9 +10,10 @@ import copy
 from scipy.ndimage import binary_dilation
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, QoSDurabilityPolicy
 from enum import Enum, auto
 
-from nav_msgs.msg import OccupancyGrid, Path
+from nav_msgs.msg import OccupancyGrid, Path, Odometry
 from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped, Twist
 from sensor_msgs.msg import LaserScan
 
@@ -68,11 +69,15 @@ class RobotNavigator(Node):
         self.ANGULAR_SPEED      = 0.3   # rad/s — velocidad de giro en ALIGNING
 
         # Subscriptores ---------
-        self.sub_map = self.create_subscription(
-            OccupancyGrid, '/map', self.cb_map, 1)
+        # self.sub_map = self.create_subscription(
+        #     OccupancyGrid, '/map', self.cb_map, 1)
+        
+        qos_map = QoSProfile(depth=1, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
+        self.sub_map = self.create_subscription(OccupancyGrid, '/map', self.cb_map, qos_map)
 
-        self.sub_pose = self.create_subscription(
-            PoseWithCovarianceStamped, '/amcl_pose', self.cb_pose, 10)
+        # self.sub_pose = self.create_subscription(
+        #     PoseWithCovarianceStamped, '/amcl_pose', self.cb_pose, 10)
+        self.sub_pose = self.create_subscription(PoseStamped, '/estimated_pose', self.cb_pose, 10)
 
         self.sub_goal = self.create_subscription(
             PoseStamped, '/goal_pose', self.cb_goal, 10)
@@ -94,13 +99,16 @@ class RobotNavigator(Node):
         self.inflated_map = self._inflate_map(msg)
         self.get_logger().info('Mapa recibido e inflado.')
 
-    def cb_pose(self, msg: PoseWithCovarianceStamped):
-        # Convertir a PoseStamped para uniformidad (*** y que hacemos con covariance?)
-        ps = PoseStamped()
-        ps.header = msg.header
-        ps.pose = msg.pose.pose
-        self.current_pose = ps
+    # def cb_pose(self, msg: PoseWithCovarianceStamped):
+    #     # Convertir a PoseStamped para uniformidad (*** y que hacemos con covariance?)
+    #     ps = PoseStamped()
+    #     ps.header = msg.header
+    #     ps.pose = msg.pose.pose
+    #     self.current_pose = ps
 
+    def cb_pose(self, msg: Odometry):
+        self.current_pose = msg
+        
     def cb_goal(self, msg: PoseStamped):
         self.get_logger().info(f'Nuevo goal recibido: ({msg.pose.position.x:.2f}, {msg.pose.position.y:.2f})')
         self.goal_pose = msg
@@ -284,8 +292,13 @@ class RobotNavigator(Node):
     # Stubs -------------------------------------------------
 
     def _check_localization_converged(self) -> bool:
-        """TODO: verificar varianza de partículas AMCL o covarianza EKF."""
-        return False
+        """TODO: verificar varianza de partículas AMCL o covarianza EKF.
+
+        Consideramos la localización válida simplemente cuando ya
+        recibimos al menos una medición de odometría.
+        """
+
+        return self.current_pose is not None
 
     def _line_of_sight(self, grid: OccupancyGrid,
                        r0: int, c0: int,
@@ -601,7 +614,7 @@ class RobotNavigator(Node):
 
     def _execute_avoidance_maneuver(self) -> bool:
         """TODO: lógica de evasión local. Retorna True cuando terminó. (Tpf0)"""
-        return False
+        return True
 
     def _align_to_goal_angle(self) -> bool:
         """

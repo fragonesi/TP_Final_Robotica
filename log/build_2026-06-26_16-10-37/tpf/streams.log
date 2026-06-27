@@ -1,0 +1,20 @@
+[0.697s] Invoking command in '/home/franny/Documentos/UdeSA/TP_Final_Robotica/build/tpf': PYTHONPATH=/home/franny/Documentos/UdeSA/TP_Final_Robotica/build/tpf/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/franny/Documentos/UdeSA/TP_Final_Robotica/install/tpf/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --editable --build-directory /home/franny/Documentos/UdeSA/TP_Final_Robotica/build/tpf/build --no-deps symlink_data
+[0.985s] running develop
+[1.204s] running egg_info
+[1.204s] writing tpf.egg-info/PKG-INFO
+[1.205s] writing dependency_links to tpf.egg-info/dependency_links.txt
+[1.205s] writing entry points to tpf.egg-info/entry_points.txt
+[1.205s] writing requirements to tpf.egg-info/requires.txt
+[1.205s] writing top-level names to tpf.egg-info/top_level.txt
+[1.207s] reading manifest file 'tpf.egg-info/SOURCES.txt'
+[1.208s] writing manifest file 'tpf.egg-info/SOURCES.txt'
+[1.209s] running build_ext
+[1.209s] Creating /home/franny/Documentos/UdeSA/TP_Final_Robotica/install/tpf/lib/python3.10/site-packages/tpf.egg-link (link to .)
+[1.210s] Installing likelihood_field_node script to /home/franny/Documentos/UdeSA/TP_Final_Robotica/install/tpf/lib/tpf
+[1.210s] Installing localization_node script to /home/franny/Documentos/UdeSA/TP_Final_Robotica/install/tpf/lib/tpf
+[1.210s] Installing map_publisher script to /home/franny/Documentos/UdeSA/TP_Final_Robotica/install/tpf/lib/tpf
+[1.210s] Installing robot_node script to /home/franny/Documentos/UdeSA/TP_Final_Robotica/install/tpf/lib/tpf
+[1.211s] 
+[1.211s] Installed /home/franny/Documentos/UdeSA/TP_Final_Robotica/build/tpf
+[1.211s] running symlink_data
+[1.252s] Invoked command in '/home/franny/Documentos/UdeSA/TP_Final_Robotica/build/tpf' returned '0': PYTHONPATH=/home/franny/Documentos/UdeSA/TP_Final_Robotica/build/tpf/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/franny/Documentos/UdeSA/TP_Final_Robotica/install/tpf/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --editable --build-directory /home/franny/Documentos/UdeSA/TP_Final_Robotica/build/tpf/build --no-deps symlink_data

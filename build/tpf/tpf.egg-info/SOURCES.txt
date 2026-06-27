@@ -1,7 +1,7 @@
 package.xml
 setup.cfg
 setup.py
-launch/rviz.launch.py
+launch/simulation.launch.py
 resource/tpf
 rviz/tp_final.rviz
 tpf/__init__.py
