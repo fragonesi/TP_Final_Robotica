@@ -14,7 +14,7 @@ from rclpy.qos import QoSProfile, QoSDurabilityPolicy
 from enum import Enum, auto
 
 from nav_msgs.msg import OccupancyGrid, Path, Odometry
-from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped, Twist
+from geometry_msgs.msg import PoseStamped, PoseArray, Twist
 from sensor_msgs.msg import LaserScan
 
 
@@ -23,11 +23,11 @@ from sensor_msgs.msg import LaserScan
 # ---------------------------------------------------------------------------
 
 class State(Enum):
-    WAITING    = auto()   # Espera un goal
-    PLANNING   = auto()   # Planifica el camino con Theta*
-    WALKING    = auto()   # Sigue el path planificado
-    AVOIDING   = auto()   # Esquiva un obstáculo no mapeado
-    ALIGNING   = auto()   # Alinea el ángulo final al llegar al goal
+    WAITING    = auto()
+    PLANNING   = auto()
+    WALKING    = auto()
+    AVOIDING   = auto()
+    ALIGNING   = auto()
 
 
 # ---------------------------------------------------------------------------
@@ -57,6 +57,12 @@ class RobotNavigator(Node):
         self.OBSTACLE_DISTANCE_THRESHOLD = 0.4 # en metros
         self.CONE_HALF_ANGLE = math.radians(45) # ±45°: un cono delantero de un total de 90°
 
+        # --- Evasión reactiva de obstáculos ---
+        self.AVOID_ANGULAR_SPEED = 0.5 # rad/s — velocidad de giro al esquivar
+        self.AVOID_EVAL_HALF_ANGLE = math.radians(90)  # +-90°: sector que se mira para elegir lado
+        self.AVOID_CLEAR_MARGIN = 1.25  # el frente se da por libre si la dist. mínima supera OBSTACLE_DISTANCE_THRESHOLD x este margen
+        self._avoid_turn_sign = 0.0 # +1 izquierda / -1 derecha
+
         # --- Inflar el mapa ---
         self.inflated_map: OccupancyGrid | None = None
         self.INFLATION_RADIUS_CELLS = 3  # 3 celdas × 0.05 m = 0.15 m de margen
@@ -68,15 +74,24 @@ class RobotNavigator(Node):
         self.ANGLE_TOLERANCE    = math.radians(5.0)  # ±5° para considerar alineado
         self.ANGULAR_SPEED      = 0.3   # rad/s — velocidad de giro en ALIGNING
 
+        # --- Localización ---
+        # nube del /belief: 2 métricas (spread_xy, spread_theta)
+        self.CONV_XY_THRESHOLD = 0.25 # m²  (~0.5 m de desvío combinado)
+        self.CONV_THETA_THRESHOLD = 0.10 # 1-R (~25° de dispersión angular)
+        self.DEGRADED_XY_THRESHOLD = 1.0 # m²  (~1.0 m de desvío combinado)
+        self.DEGRADED_THETA_THRESHOLD = 0.30 # 1-R (~50° de dispersión angular)
+        self.MIN_PARTICLES_FOR_STATS = 3 # mínima cantidad de partículas para una varianza significativa
+        self.belief_spread_xy: float | None = None # None hasta el primer /belief
+        self.belief_spread_theta: float | None = None
+        self.localization_converged: bool = False # flag de convergencia
+
         # Subscriptores ---------
-        # self.sub_map = self.create_subscription(
-        #     OccupancyGrid, '/map', self.cb_map, 1)
         
         qos_map = QoSProfile(depth=1, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
         self.sub_map = self.create_subscription(OccupancyGrid, '/map', self.cb_map, qos_map)
+        
+        self.sub_belief = self.create_subscription(PoseArray, '/belief', self.cb_belief, 10)
 
-        # self.sub_pose = self.create_subscription(
-        #     PoseWithCovarianceStamped, '/amcl_pose', self.cb_pose, 10)
         self.sub_pose = self.create_subscription(PoseStamped, '/estimated_pose', self.cb_pose, 10)
 
         self.sub_goal = self.create_subscription(
@@ -84,6 +99,7 @@ class RobotNavigator(Node):
 
         self.sub_scan = self.create_subscription(
             LaserScan, '/scan', self.cb_scan, 10)
+        
 
         # Publicadores ---------
         self.pub_cmd_vel = self.create_publisher(Twist, '/cmd_vel', 10)
@@ -99,16 +115,9 @@ class RobotNavigator(Node):
         self.inflated_map = self._inflate_map(msg)
         self.get_logger().info('Mapa recibido e inflado.')
 
-    # def cb_pose(self, msg: PoseWithCovarianceStamped):
-    #     # Convertir a PoseStamped para uniformidad (*** y que hacemos con covariance?)
-    #     ps = PoseStamped()
-    #     ps.header = msg.header
-    #     ps.pose = msg.pose.pose
-    #     self.current_pose = ps
-
     def cb_pose(self, msg: Odometry):
         self.current_pose = msg
-        
+
     def cb_goal(self, msg: PoseStamped):
         self.get_logger().info(f'Nuevo goal recibido: ({msg.pose.position.x:.2f}, {msg.pose.position.y:.2f})')
         self.goal_pose = msg
@@ -150,6 +159,38 @@ class RobotNavigator(Node):
  
         self.obstacle_ahead = obstacle_found
 
+    def cb_belief(self, msg: PoseArray):
+        """
+        Recibe la nube de partículas del filtro (/belief) y hace dos cosas:
+
+        Calcula la dispersión de la nube (para evaluar la confiabilidad):
+             - belief_spread_xy:    var_x + var_y  (traza de la covarianza, m²)
+             - belief_spread_theta: 1 - R          (dispersión circular del yaw)
+           Estas métricas alimentan _check_localization_converged() y
+           _localization_degraded(): una nube concentrada = pose confiable.
+        """
+        n = len(msg.poses)
+        if n < self.MIN_PARTICLES_FOR_STATS:
+            # Sin suficientes partículas no hay estadística significativa.
+            self.belief_spread_xy = None
+            self.belief_spread_theta = None
+            return
+
+        xs = np.array([p.position.x for p in msg.poses])
+        ys = np.array([p.position.y for p in msg.poses])
+
+        # Dispersión posicional: traza de la covarianza (suma de varianzas).
+        self.belief_spread_xy = float(xs.var() + ys.var())
+
+        # Componentes circulares del yaw (se reusan para dispersión y media).
+        yaws = np.array([self._get_yaw_from_pose_msg(p) for p in msg.poses])
+        cos_mean = np.cos(yaws).mean()
+        sin_mean = np.sin(yaws).mean()
+
+        # Dispersión angular: 1 - R, con R = |media de los versores| ∈ [0, 1].
+        R = math.hypot(cos_mean, sin_mean)
+        self.belief_spread_theta = float(1.0 - R)
+
     # Loop principal de la máquina de estados -----------------------------------------------------------------
 
     def state_machine_loop(self):
@@ -166,9 +207,9 @@ class RobotNavigator(Node):
             case State.WAITING:
                 self.run_waiting()
             case State.PLANNING:
-                self.run_planning() # Yo
+                self.run_planning()
             case State.WALKING:
-                self.run_walking() # Yo
+                self.run_walking()
             case State.AVOIDING:
                 self.run_avoiding()
             case State.ALIGNING:
@@ -183,8 +224,7 @@ class RobotNavigator(Node):
         True solo si la localización es confiable: el filtro convergió Y no está degradado.
         False: el loop frena el robot y no ejecuta el estado actual.
         """
-        return (self._check_localization_converged()
-                and not self._localization_degraded())
+        return (self._check_localization_converged() and not self._localization_degraded())
 
     def run_waiting(self):
         """
@@ -292,13 +332,36 @@ class RobotNavigator(Node):
     # Stubs -------------------------------------------------
 
     def _check_localization_converged(self) -> bool:
-        """TODO: verificar varianza de partículas AMCL o covarianza EKF.
-
-        Consideramos la localización válida simplemente cuando ya
-        recibimos al menos una medición de odometría.
         """
+        True si la nube de partículas está suficientemente concentrada como
+        para confiar en la pose estimada.
 
-        return self.current_pose is not None
+        Una vez que la dispersión cae por debajo de los umbrales CONVERGED, se enciende un 
+        latch (self.localization_converged) que se mantiene mientras la localización no se degrade. 
+        Así el robot no re-evalúa la convergencia desde cero a cada scan.
+
+        Si todavía no llegó ningún /belief (spread None), se considera NO
+        convergido: el robot espera con seguridad hasta tener una nube válida
+        (típicamente tras fijar el 2D Pose Estimate en RViz).
+        """
+        if self.belief_spread_xy is None or self.belief_spread_theta is None:
+            return False
+
+        # Si ya estaba convergido, mantenerlo (la degradación se evalúa aparte).
+        if self.localization_converged:
+            return True
+
+        # ambas dispersiones bajo el umbral estricto.
+        if (self.belief_spread_xy < self.CONV_XY_THRESHOLD
+                and self.belief_spread_theta < self.CONV_THETA_THRESHOLD):
+            self.localization_converged = True
+            self.get_logger().info(
+                f'Localización convergió '
+                f'(spread_xy={self.belief_spread_xy:.3f} m², '
+                f'spread_θ={self.belief_spread_theta:.3f}).')
+            return True
+
+        return False
 
     def _line_of_sight(self, grid: OccupancyGrid,
                        r0: int, c0: int,
@@ -473,9 +536,8 @@ class RobotNavigator(Node):
         return waypoints
 
     # -----------------------------------------------------------------------
-    # Helpers de conversión: mundo ↔ grilla
+    # Helpers:
     # -----------------------------------------------------------------------
-
     
     def _world_to_grid(self, x: float, y: float,
                        grid: OccupancyGrid) -> tuple[int, int] | None:
@@ -544,15 +606,21 @@ class RobotNavigator(Node):
         dy = self.goal_pose.pose.position.y - self.current_pose.pose.position.y
         return math.hypot(dx, dy) < self.GOAL_TOLERANCE
 
+    # Cambian segun entrada los siguientes 2:
     def _get_yaw_from_pose(self, pose: PoseStamped) -> float:
         """Extrae el yaw (radianes) del quaternion de una PoseStamped."""
         q = pose.pose.orientation
-        # Fórmula yaw desde quaternion (roll y pitch asumidos 0)
         siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
         cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
         return math.atan2(siny_cosp, cosy_cosp)
     
-    # ***
+    def _get_yaw_from_pose_msg(self, pose) -> float:
+        """Extrae el yaw (rad) del quaternion de un geometry_msgs/Pose."""
+        q = pose.orientation
+        siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
+        cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+        return math.atan2(siny_cosp, cosy_cosp)
+    
     def _compute_pure_pursuit_cmd(self) -> Twist:
         """
         Implementa Pure Pursuit con velocidad lineal constante.
@@ -564,8 +632,6 @@ class RobotNavigator(Node):
           3. Calcular el ángulo α entre el heading del robot y el waypoint.
           4. Calcular ω = (2 * v * sin(α)) / L  y publicar Twist.
 
-        El índice current_waypoint_idx se avanza para no re-examinar
-        waypoints ya superados, lo que hace la búsqueda O(1) amortizado.
         """
         if self.current_pose is None or not self.planned_path:
             return Twist()
@@ -574,7 +640,7 @@ class RobotNavigator(Node):
         ry = self.current_pose.pose.position.y
         robot_yaw = self._get_yaw_from_pose(self.current_pose)
 
-        # --- 1. Avanzar el índice base: descartar waypoints ya superados ---
+        # 1) Avanzar el índice base: descartar waypoints ya superados ---
         while self.current_waypoint_idx < len(self.planned_path) - 1:
             wp = self.planned_path[self.current_waypoint_idx]
             dx = wp.pose.position.x - rx
@@ -585,14 +651,14 @@ class RobotNavigator(Node):
             else:
                 break
 
-        # --- 2. Buscar waypoint objetivo a >= LOOKAHEAD_DISTANCE ---
+        # 2) Buscar waypoint objetivo a >= LOOKAHEAD_DISTANCE ---
         target_wp = None
         if self.current_waypoint_idx < len(self.planned_path):
             target_wp = self.planned_path[self.current_waypoint_idx]
         else:
             target_wp = self.planned_path[-1]
 
-        # --- 3. Calcular α: ángulo al target relativo al heading del robot ---
+        # 3) Calcular α: ángulo al target relativo al heading del robot ---
         dx = target_wp.pose.position.x - rx
         dy = target_wp.pose.position.y - ry
         angle_to_target = math.atan2(dy, dx)
@@ -601,7 +667,7 @@ class RobotNavigator(Node):
             math.cos(angle_to_target - robot_yaw)
         )   # normalizado a [-π, π]
 
-        # --- 4. Calcular ω con la fórmula de Pure Pursuit ---
+        # 4) Calcular ω con la fórmula de Pure Pursuit ---
         # ω = (2 * v * sin(α)) / L
         L = self.LOOKAHEAD_DISTANCE
         v = self.LINEAR_SPEED
@@ -613,9 +679,86 @@ class RobotNavigator(Node):
         return cmd
 
     def _execute_avoidance_maneuver(self) -> bool:
-        """TODO: lógica de evasión local. Retorna True cuando terminó. (Tpf0)"""
+        """
+        Política de evasión reactiva para obstáculos NO mapeados.
+
+        """
+        if self.last_scan is None:
+            # Sin datos del LIDAR freno y espero el próximo scan.
+            self._stop_robot()
+            return False
+
+        # 1) Chequeo de si el frente ya esta limpio:
+        if self._front_is_clear():
+            self._stop_robot()
+            self._avoid_turn_sign = 0.0  # reseteo para la próxima
+            self.get_logger().info('Frente despejado. Evasión completa.')
+            return True
+
+        # 2) Elegir hacia qué lado girar
+        if self._avoid_turn_sign == 0.0:
+            self._avoid_turn_sign = self._pick_clearer_side()
+            lado = 'izquierda' if self._avoid_turn_sign > 0 else 'derecha'
+            self.get_logger().info(f'Obstáculo: girando hacia la {lado} para esquivar.')
+
+        # Girar en el lugar hacia el lado elegido
+        cmd = Twist()
+        cmd.linear.x = 0.0
+        cmd.angular.z = self._avoid_turn_sign * self.AVOID_ANGULAR_SPEED
+        self.pub_cmd_vel.publish(cmd)
+
+        return False
+
+    def _front_is_clear(self) -> bool:
+        """
+        True si NINGÚN rayo válido del cono frontal (±CONE_HALF_ANGLE) está más
+        cerca que OBSTACLE_DISTANCE_THRESHOLD * AVOID_CLEAR_MARGIN.
+
+        El margen extra es para evitar declarar "libre" cuando el obstáculo apenas salió del umbral de detección.
+        """
+        msg = self.last_scan
+        clear_dist = self.OBSTACLE_DISTANCE_THRESHOLD * self.AVOID_CLEAR_MARGIN
+
+        angle = msg.angle_min
+        for r in msg.ranges:
+            angle_norm = math.atan2(math.sin(angle), math.cos(angle))
+            if abs(angle_norm) <= self.CONE_HALF_ANGLE:
+                if (r > msg.range_min and r < msg.range_max
+                        and math.isfinite(r) and r < clear_dist):
+                    return False
+            angle += msg.angle_increment
         return True
 
+    def _pick_clearer_side(self) -> float:
+        """
+        Mira el sector ±AVOID_EVAL_HALF_ANGLE y devuelve +1.0 si conviene girar a
+        la izquierda (ángulos positivos del LIDAR) o -1.0 a la derecha, según qué
+        lado tenga MAYOR distancia libre mínima (el lado con el rayo más cercano
+        es el más bloqueado, así que se gira hacia el opuesto).
+
+        Si un lado no tiene lecturas válidas, se elige el otro. Si ninguno tiene,
+        se gira a la izquierda por defecto.
+        """
+        msg = self.last_scan
+        min_left = float('inf') # ángulos positivos (izquierda)
+        min_right = float('inf') # ángulos negativos (derecha)
+
+        angle = msg.angle_min
+        for r in msg.ranges:
+            angle_norm = math.atan2(math.sin(angle), math.cos(angle))
+            if abs(angle_norm) <= self.AVOID_EVAL_HALF_ANGLE:
+                if (r > msg.range_min and r < msg.range_max and math.isfinite(r)):
+                    if angle_norm > 0:
+                        min_left = min(min_left, r)
+                    elif angle_norm < 0:
+                        min_right = min(min_right, r)
+            angle += msg.angle_increment
+
+        if min_left >= min_right:
+            return +1.0
+        else:
+            return -1.0
+        
     def _align_to_goal_angle(self) -> bool:
         """
         Gira el robot hasta alcanzar el yaw del goal con tolerancia ±5°.
@@ -658,8 +801,27 @@ class RobotNavigator(Node):
         return False
 
     def _localization_degraded(self) -> bool:
-        """TODO: verificar si la covarianza creció demasiado durante el recorrido."""
-        return False
+        """
+        True si la nube de partículas se dispersó tanto durante el recorrido
+        que la pose ya no es confiable.
+
+        """
+        if self.belief_spread_xy is None or self.belief_spread_theta is None:
+            return False
+
+        degraded = (self.belief_spread_xy > self.DEGRADED_XY_THRESHOLD
+                    or self.belief_spread_theta > self.DEGRADED_THETA_THRESHOLD)
+
+        if degraded and self.localization_converged:
+            # Romper el latch: la próxima vez habrá que volver a converger.
+            self.localization_converged = False
+            self.get_logger().warn(
+                f'Localización DEGRADADA '
+                f'(spread_xy={self.belief_spread_xy:.3f} m², '
+                f'spread_θ={self.belief_spread_theta:.3f}). '
+                f'Robot detenido hasta re-converger.')
+
+        return degraded
     
     def _inflate_map(self, grid: OccupancyGrid) -> OccupancyGrid:
         """

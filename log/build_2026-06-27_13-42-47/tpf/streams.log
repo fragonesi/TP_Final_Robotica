@@ -1,0 +1,22 @@
+[0.381s] Invoking command in '/home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/build/tpf': PYTHONPATH=/home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/build/tpf/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/install/tpf/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --editable --build-directory /home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/build/tpf/build --no-deps symlink_data
+[0.534s] running develop
+[0.628s] running egg_info
+[0.628s] writing tpf.egg-info/PKG-INFO
+[0.628s] writing dependency_links to tpf.egg-info/dependency_links.txt
+[0.628s] writing entry points to tpf.egg-info/entry_points.txt
+[0.629s] writing requirements to tpf.egg-info/requires.txt
+[0.629s] writing top-level names to tpf.egg-info/top_level.txt
+[0.630s] reading manifest file 'tpf.egg-info/SOURCES.txt'
+[0.630s] writing manifest file 'tpf.egg-info/SOURCES.txt'
+[0.631s] running build_ext
+[0.631s] Creating /home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/install/tpf/lib/python3.10/site-packages/tpf.egg-link (link to .)
+[0.632s] Installing likelihood_field_node script to /home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/install/tpf/lib/tpf
+[0.632s] Installing localization_node script to /home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/install/tpf/lib/tpf
+[0.632s] Installing map_publisher script to /home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/install/tpf/lib/tpf
+[0.632s] Installing robot_node script to /home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/install/tpf/lib/tpf
+[0.632s] 
+[0.632s] Installed /home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/build/tpf
+[0.632s] running symlink_data
+[0.632s] symbolically linking /home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/build/tpf/map.yaml -> /home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/install/tpf/share/tpf
+[0.632s] symbolically linking /home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/build/tpf/map.pgm -> /home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/install/tpf/share/tpf
+[0.653s] Invoked command in '/home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/build/tpf' returned '0': PYTHONPATH=/home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/build/tpf/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/install/tpf/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --editable --build-directory /home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/build/tpf/build --no-deps symlink_data

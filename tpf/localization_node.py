@@ -42,6 +42,7 @@ class LocalizationNode(Node):
         self.create_subscription(PoseWithCovarianceStamped, '/initialpose', self.initialpose_callback, 10)
         self.create_subscription(Odometry, '/calc_odom', self.odom_callback, 10)
         self.create_subscription(LaserScan, '/scan', self.scan_callback, 10)
+        
         self.belief_pub = self.create_publisher(PoseArray, '/belief', 10)
         self.tf_broadcaster = TransformBroadcaster(self)
         self.initialized = False

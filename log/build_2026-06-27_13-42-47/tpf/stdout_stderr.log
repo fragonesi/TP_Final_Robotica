@@ -1,0 +1,20 @@
+running develop
+running egg_info
+writing tpf.egg-info/PKG-INFO
+writing dependency_links to tpf.egg-info/dependency_links.txt
+writing entry points to tpf.egg-info/entry_points.txt
+writing requirements to tpf.egg-info/requires.txt
+writing top-level names to tpf.egg-info/top_level.txt
+reading manifest file 'tpf.egg-info/SOURCES.txt'
+writing manifest file 'tpf.egg-info/SOURCES.txt'
+running build_ext
+Creating /home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/install/tpf/lib/python3.10/site-packages/tpf.egg-link (link to .)
+Installing likelihood_field_node script to /home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/install/tpf/lib/tpf
+Installing localization_node script to /home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/install/tpf/lib/tpf
+Installing map_publisher script to /home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/install/tpf/lib/tpf
+Installing robot_node script to /home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/install/tpf/lib/tpf
+
+Installed /home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/build/tpf
+running symlink_data
+symbolically linking /home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/build/tpf/map.yaml -> /home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/install/tpf/share/tpf
+symbolically linking /home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/build/tpf/map.pgm -> /home/romanella/Documents/ros2_ws/src/TP_Final_Robotica/install/tpf/share/tpf

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Nodo de navegación autónoma - Esqueleto con máquina de estados.
-Estados: LOCALIZING → WAITING → PLANNING → WALKING → AVOIDING → ALIGNING → LOCALIZING/WAITING
+Estados: WAITING → PLANNING → WALKING → AVOIDING → ALIGNING → WAITING
 """
 import heapq
 import math
@@ -13,7 +13,7 @@ from rclpy.node import Node
 from enum import Enum, auto
 
 from nav_msgs.msg import OccupancyGrid, Path
-from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped, Twist
+from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped, PoseArray, Twist, Quaternion
 from sensor_msgs.msg import LaserScan
 
 
@@ -22,7 +22,6 @@ from sensor_msgs.msg import LaserScan
 # ---------------------------------------------------------------------------
 
 class State(Enum):
-    LOCALIZING = auto()   # El robot se localiza en el mapa (inicio o si se perdió)
     WAITING    = auto()   # Espera un goal
     PLANNING   = auto()   # Planifica el camino con Theta*
     WALKING    = auto()   # Sigue el path planificado
@@ -40,7 +39,7 @@ class RobotNavigator(Node):
         super().__init__('robot_navigator')
 
         # Estado inicial ---------
-        self.state = State.LOCALIZING
+        self.state = State.WAITING
         self.get_logger().info(f'Estado inicial: {self.state.name}')
 
         # Variables internas ---------
@@ -68,12 +67,25 @@ class RobotNavigator(Node):
         self.ANGLE_TOLERANCE    = math.radians(5.0)  # ±5° para considerar alineado
         self.ANGULAR_SPEED      = 0.3   # rad/s — velocidad de giro en ALIGNING
 
-        # Subscriptores ---------
-        self.sub_map = self.create_subscription(
-            OccupancyGrid, '/map', self.cb_map, 1)
+        # --- Localización ---
+        # nube del /belief: 2 métricas.
+        # spread_xy: traza de la covarianza posicional (var_x + var_y) en m^2
+        # spread_theta: dispersión circular (1 - R), adimensional en [0, 1]
+        # cuando la dispersión cae debajo de los umbrales CONV, el filtro se considera "convergido"
+        # se considera "degradado" si la dispersión supera los umbrales DEGRADED (que el guard no oscile a cada scan)
+        self.CONV_XY_THRESHOLD = 0.25 # m²  (~0.5 m de desvío combinado)
+        self.CONV_THETA_THRESHOLD = 0.10 # 1-R (~25° de dispersión angular)
+        self.DEGRADED_XY_THRESHOLD = 1.0 # m²  (~1.0 m de desvío combinado)
+        self.DEGRADED_THETA_THRESHOLD = 0.30 # 1-R (~50° de dispersión angular)
+        self.MIN_PARTICLES_FOR_STATS = 3 # mínima cantidad de partículas para una varianza significativa
+        self.belief_spread_xy: float | None = None # None hasta el primer /belief
+        self.belief_spread_theta: float | None = None
+        self.localization_converged: bool = False # flag de convergencia
 
-        self.sub_pose = self.create_subscription(
-            PoseWithCovarianceStamped, '/amcl_pose', self.cb_pose, 10)
+        # Subscriptores ---------
+        self.sub_belief = self.create_subscription(
+            PoseArray, '/belief', self.cb_belief, 10)
+
 
         self.sub_goal = self.create_subscription(
             PoseStamped, '/goal_pose', self.cb_goal, 10)
@@ -95,12 +107,6 @@ class RobotNavigator(Node):
         self.inflated_map = self._inflate_map(msg)
         self.get_logger().info('Mapa recibido e inflado.')
 
-    def cb_pose(self, msg: PoseWithCovarianceStamped):
-        # Convertir a PoseStamped para uniformidad (*** y que hacemos con covariance?)
-        ps = PoseStamped()
-        ps.header = msg.header
-        ps.pose = msg.pose.pose
-        self.current_pose = ps
 
     def cb_goal(self, msg: PoseStamped):
         self.get_logger().info(f'Nuevo goal recibido: ({msg.pose.position.x:.2f}, {msg.pose.position.y:.2f})')
@@ -143,18 +149,94 @@ class RobotNavigator(Node):
  
         self.obstacle_ahead = obstacle_found
 
+    def cb_belief(self, msg: PoseArray):
+        """
+        Recibe la nube de partículas del filtro (/belief) y hace dos cosas:
+
+        1. Calcula la dispersión de la nube (para evaluar la confiabilidad):
+             - belief_spread_xy:    var_x + var_y  (traza de la covarianza, m²)
+             - belief_spread_theta: 1 - R          (dispersión circular del yaw)
+           Estas métricas alimentan _check_localization_converged() y
+           _localization_degraded(): una nube concentrada = pose confiable.
+
+        2. Estima la pose actual del robot como la MEDIA de las partículas y la
+           guarda en self.current_pose. Con un filtro de partículas, la pose es
+           el resumen puntual de la nube: x e y se promedian linealmente; el yaw
+           se promedia de forma CIRCULAR (atan2 de las componentes sin/cos) para
+           no romperse con el wraparound en ±π. Como el filtro resamplea a peso
+           uniforme y /belief no trae pesos, la media simple equivale a la media
+           ponderada. Esto reemplaza la pose que se esperaba de /amcl_pose.
+        """
+        n = len(msg.poses)
+        if n < self.MIN_PARTICLES_FOR_STATS:
+            # Sin suficientes partículas no hay estadística significativa.
+            self.belief_spread_xy = None
+            self.belief_spread_theta = None
+            return
+
+        xs = np.array([p.position.x for p in msg.poses])
+        ys = np.array([p.position.y for p in msg.poses])
+
+        # Dispersión posicional: traza de la covarianza (suma de varianzas).
+        self.belief_spread_xy = float(xs.var() + ys.var())
+
+        # Componentes circulares del yaw (se reusan para dispersión y media).
+        yaws = np.array([self._get_yaw_from_pose_msg(p) for p in msg.poses])
+        cos_mean = np.cos(yaws).mean()
+        sin_mean = np.sin(yaws).mean()
+
+        # Dispersión angular: 1 - R, con R = |media de los versores| ∈ [0, 1].
+        R = math.hypot(cos_mean, sin_mean)
+        self.belief_spread_theta = float(1.0 - R)
+
+        # --- Pose actual = media de la nube ---
+        mean_x = float(xs.mean())
+        mean_y = float(ys.mean())
+        mean_yaw = math.atan2(sin_mean, cos_mean)   # media circular del yaw
+
+        ps = PoseStamped()
+        ps.header.frame_id = 'map'
+        ps.header.stamp = self.get_clock().now().to_msg()
+        ps.pose.position.x = mean_x
+        ps.pose.position.y = mean_y
+        ps.pose.orientation = self._yaw_to_quaternion(mean_yaw)
+        self.current_pose = ps
+
+    def _get_yaw_from_pose_msg(self, pose) -> float:
+        """Extrae el yaw (rad) del quaternion de un geometry_msgs/Pose."""
+        q = pose.orientation
+        siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
+        cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+        return math.atan2(siny_cosp, cosy_cosp)
+
+    def _yaw_to_quaternion(self, yaw: float):
+        """Construye un geometry_msgs/Quaternion a partir de un yaw (rad)."""
+        q = Quaternion()
+        q.x = 0.0
+        q.y = 0.0
+        q.z = math.sin(yaw * 0.5)
+        q.w = math.cos(yaw * 0.5)
+        return q
+
     # Loop principal de la máquina de estados -----------------------------------------------------------------
 
     def state_machine_loop(self):
+
+        if not self._localization_ok():
+            self._stop_robot()
+            self.get_logger().warn(
+                f'Localización no confiable. Robot detenido. '
+                f'Estado en espera: {self.state.name}.',
+                throttle_duration_sec=2.0)
+            return
+
         match self.state:
-            case State.LOCALIZING:
-                self.run_localizing() # Franny
             case State.WAITING:
                 self.run_waiting()
             case State.PLANNING:
-                self.run_planning() # Yo
+                self.run_planning()
             case State.WALKING:
-                self.run_walking() # Yo
+                self.run_walking()
             case State.AVOIDING:
                 self.run_avoiding()
             case State.ALIGNING:
@@ -162,31 +244,14 @@ class RobotNavigator(Node):
 
     # Implementación de cada estado -----------------------------------------------------------------------
 
-    def run_localizing(self):
+    def _localization_ok(self) -> bool:
         """
-        El robot se localiza en el mapa usando AMCL / partículas / EKF.
-        Puede ser la localización inicial o una re-localización tras perderse
-        durante WALKING.
+        Guard global de localización.
 
-        Transición:
-          → PLANNING  si converge Y había un goal_pose pendiente
-                       (replanifica desde la posición real actual hacia el
-                       mismo goal, sin pedirle al usuario que lo reenvíe).
-          → WAITING   si converge y no había goal pendiente
-                       (caso de la localización inicial al arrancar el nodo).
+        True solo si la localización es confiable: el filtro convergió Y no está degradado.
+        False: el loop frena el robot y no ejecuta el estado actual.
         """
-        localization_converged = self._check_localization_converged()
-
-        if localization_converged:
-            if self.goal_pose is not None:
-                self.get_logger().info(
-                    'Localización convergida. Goal pendiente detectado. '
-                    'Pasando a PLANNING para recalcular.')
-                self.transition_to(State.PLANNING)
-            else:
-                self.get_logger().info(
-                    'Localización convergida. Sin goal pendiente. Pasando a WAITING.')
-                self.transition_to(State.WAITING)
+        return (self._check_localization_converged() and not self._localization_degraded())
 
     def run_waiting(self):
         """
@@ -223,27 +288,12 @@ class RobotNavigator(Node):
     def run_walking(self):
         """
         Sigue el path planificado con Pure Pursuit (u otro controlador).
-        Transiciones (en orden de prioridad):
-          → LOCALIZING  si la localización se degrada durante el recorrido
-                        (chequeo continuo, no solo al llegar al goal).
-          → PLANNING    si llega un goal nuevo
-          → AVOIDING    si detecta obstáculo no mapeado en el camino
-          → ALIGNING    si llegó al goal
-
-        El planned_path NO se descarta al ir a LOCALIZING: queda guardado
-        en self.planned_path, pero no se reutiliza directamente. Al volver
-        de LOCALIZING, run_localizing fuerza un PLANNING que recalcula
-        desde la posición real post-relocalización hacia el mismo goal_pose.
+        Transiciones:
+          → ALIGNING  si llegó al goal
+          → AVOIDING  si detecta obstáculo no mapeado en el camino
+          → PLANNING  si llega un goal nuevo
         """
-        # Prioridad 1: localización degradada → interrumpe todo lo demás
-        if self._localization_degraded():
-            self.get_logger().warn(
-                'Localización degradada durante WALKING. Pasando a LOCALIZING.')
-            self._stop_robot()
-            self.transition_to(State.LOCALIZING)
-            return
-
-        # Prioridad 2: nuevo goal → re-planear
+        # Prioridad 1: nuevo goal → re-planear
         if self.new_goal_received:
             self.new_goal_received = False
             self.get_logger().info('Nuevo goal durante WALKING. Pasando a PLANNING.')
@@ -251,14 +301,14 @@ class RobotNavigator(Node):
             self.transition_to(State.PLANNING)
             return
 
-        # Prioridad 3: obstáculo detectado en el camino
+        # Prioridad 2: obstáculo detectado en el camino
         if self._obstacle_detected_on_path():
             self.get_logger().info('Obstáculo detectado. Pasando a AVOIDING.')
             self._stop_robot()
             self.transition_to(State.AVOIDING)
             return
 
-        # Prioridad 4: llegó al goal (posición)
+        # Prioridad 3: llegó al goal (posición)
         if self._reached_goal_position():
             self.get_logger().info('Posición del goal alcanzada. Pasando a ALIGNING.')
             self._stop_robot()
@@ -274,32 +324,28 @@ class RobotNavigator(Node):
         Esquiva un obstáculo no mapeado.
         Luego verifica si el próximo waypoint del path original sigue siendo
         alcanzable (line-of-sight libre).
-        Transición → WALKING   si el waypoint sigue alcanzable.
-        Transición → PLANNING  si el path original quedó bloqueado.
+        Transición → PLANNING.
         """
         avoidance_done = self._execute_avoidance_maneuver()
 
         if avoidance_done:
-            if self._next_waypoint_reachable():
-                self.get_logger().info('Waypoint alcanzable. Retomando WALKING.')
-                self.transition_to(State.WALKING)
-            else:
-                self.get_logger().info('Path bloqueado. Re-planeando. Pasando a PLANNING.')
+                self.get_logger().info('Re-planeando. Pasando a PLANNING.')
                 self.transition_to(State.PLANNING)
 
     def run_aligning(self):
         """
         Alinea el robot al ángulo final del goal.
-        Transición → LOCALIZING si la localización se degradó durante el recorrido.
+        Transición → PLANNING  si llega un goal nuevo durante la alineación.
         Transición → WAITING    si la alineación terminó correctamente.
         """
         alignment_done = self._align_to_goal_angle()
 
         if alignment_done:
             self._stop_robot()
-            if self._localization_degraded():
-                self.get_logger().info('Localización degradada. Pasando a LOCALIZING.')
-                self.transition_to(State.LOCALIZING)
+            if self.new_goal_received:
+                self.new_goal_received = False
+                self.get_logger().info('Nuevo goal durante ALIGNING. Pasando a PLANNING.')
+                self.transition_to(State.PLANNING)
             else:
                 self.get_logger().info('Alineación completa. Pasando a WAITING.')
                 self.transition_to(State.WAITING)
@@ -310,10 +356,39 @@ class RobotNavigator(Node):
         self.get_logger().info(f'[FSM] {self.state.name} → {new_state.name}')
         self.state = new_state
 
-    # Stubs — reemplazar con implementación real -----------------------------------------------------------------------
+    # Stubs -------------------------------------------------
 
-    def _check_localization_converged(self) -> bool:
-        """TODO: verificar varianza de partículas AMCL o covarianza EKF."""
+    def _check_localization_converged(self) -> bool: # ***
+        """
+        True si la nube de partículas está suficientemente concentrada como
+        para confiar en la pose estimada.
+
+        Usa histéresis: una vez que la dispersión cae por debajo de los
+        umbrales CONVERGED, se enciende un latch (self.localization_converged)
+        que se mantiene mientras la localización no se degrade. Así el robot no
+        re-evalúa la convergencia desde cero a cada scan.
+
+        Si todavía no llegó ningún /belief (spread None), se considera NO
+        convergido: el robot espera con seguridad hasta tener una nube válida
+        (típicamente tras fijar el 2D Pose Estimate en RViz).
+        """
+        if self.belief_spread_xy is None or self.belief_spread_theta is None:
+            return False
+
+        # Si ya estaba convergido, mantenerlo (la degradación se evalúa aparte).
+        if self.localization_converged:
+            return True
+
+        # Primer enganche: requiere ambas dispersiones bajo el umbral estricto.
+        if (self.belief_spread_xy < self.CONV_XY_THRESHOLD
+                and self.belief_spread_theta < self.CONV_THETA_THRESHOLD):
+            self.localization_converged = True
+            self.get_logger().info(
+                f'Localización convergió '
+                f'(spread_xy={self.belief_spread_xy:.3f} m², '
+                f'spread_θ={self.belief_spread_theta:.3f}).')
+            return True
+
         return False
 
     def _line_of_sight(self, grid: OccupancyGrid,
@@ -360,7 +435,6 @@ class RobotNavigator(Node):
                 err += dr
                 c   += sc
 
-    # ***
     def _run_theta_star(self, start: PoseStamped, goal: PoseStamped,
                         grid: OccupancyGrid) -> list:
         """
@@ -458,7 +532,7 @@ class RobotNavigator(Node):
                         f = g_via_grandparent + h(nr, nc)
                         heapq.heappush(open_set, (f, nr, nc))
                 else:
-                    # Sin línea de visión: comportamiento clásico A*
+                    # Sin línea de visión:
                     g_via_current = g_score[current] + move_cost
                     if g_via_current < g_score.get(neighbor, float('inf')):
                         g_score[neighbor] = g_via_current
@@ -630,56 +704,8 @@ class RobotNavigator(Node):
         return cmd
 
     def _execute_avoidance_maneuver(self) -> bool:
-        """TODO: lógica de evasión local. Retorna True cuando terminó. USAR LO DEL TPF0 !!!"""
+        """TODO: lógica de evasión local. Retorna True cuando terminó. (Tpf0)"""
         return False
-
-    # *** ESTE
-    def _next_waypoint_reachable(self) -> bool:
-        """
-        Verifica si, desde la pose actual del robot, hay línea de visión
-        libre (sobre el mapa inflado) hacia el waypoint actual del path
-        original.
-
-        Se usa al salir de AVOIDING: si el desvío para evitar el obstáculo
-        no mapeado deja el siguiente waypoint visible, alcanza con retomar
-        WALKING sin replanificar. Si quedó bloqueado, hay que ir a PLANNING.
-
-        Retorna True si hay línea de visión libre, False si no.
-        """
-        if (self.current_pose is None
-                or self.inflated_map is None
-                or not self.planned_path
-                or self.current_waypoint_idx >= len(self.planned_path)):
-            # Sin datos suficientes para decidir → más seguro replanificar
-            return False
-
-        # Convertir pose actual a celda de grilla
-        rx = self.current_pose.pose.position.x
-        ry = self.current_pose.pose.position.y
-        current_cell = self._world_to_grid(rx, ry, self.inflated_map)
-
-        if current_cell is None:
-            self.get_logger().warn(
-                '_next_waypoint_reachable: pose actual fuera del mapa.')
-            return False
-
-        # Convertir el waypoint objetivo a celda de grilla
-        target_wp = self.planned_path[self.current_waypoint_idx]
-        tx = target_wp.pose.position.x
-        ty = target_wp.pose.position.y
-        target_cell = self._world_to_grid(tx, ty, self.inflated_map)
-
-        if target_cell is None:
-            self.get_logger().warn(
-                '_next_waypoint_reachable: waypoint objetivo fuera del mapa.')
-            return False
-
-        r0, c0 = current_cell
-        r1, c1 = target_cell
-
-        # Reutiliza el mismo Bresenham que usa Theta* para construir el path
-        return self._line_of_sight(self.inflated_map, r0, c0, r1, c1)
-
 
     def _align_to_goal_angle(self) -> bool:
         """
@@ -693,6 +719,9 @@ class RobotNavigator(Node):
         """
         if self.current_pose is None or self.goal_pose is None:
             return False
+        
+        if self.new_goal_received:
+            return True
 
         # Yaw actual del robot
         current_yaw = self._get_yaw_from_pose(self.current_pose)
@@ -719,9 +748,35 @@ class RobotNavigator(Node):
         self.pub_cmd_vel.publish(cmd)
         return False
 
-    def _localization_degraded(self) -> bool:
-        """TODO: verificar si la covarianza creció demasiado durante el recorrido."""
-        return False
+    def _localization_degraded(self) -> bool: # ***
+        """
+        True si la nube de partículas se dispersó tanto durante el recorrido
+        que la pose ya no es confiable (el robot "se perdió": secuestro,
+        pasillo simétrico, deriva acumulada, etc.).
+
+        Umbrales DEGRADED más laxos que los de convergencia: ése es el lado
+        alto de la histéresis. Cuando se cruza, se apaga el latch de
+        convergencia para forzar una re-convergencia antes de volver a confiar.
+
+        Sin datos de /belief todavía, no se declara degradación (de eso ya se
+        encarga _check_localization_converged devolviendo False).
+        """
+        if self.belief_spread_xy is None or self.belief_spread_theta is None:
+            return False
+
+        degraded = (self.belief_spread_xy > self.DEGRADED_XY_THRESHOLD
+                    or self.belief_spread_theta > self.DEGRADED_THETA_THRESHOLD)
+
+        if degraded and self.localization_converged:
+            # Romper el latch: la próxima vez habrá que volver a converger.
+            self.localization_converged = False
+            self.get_logger().warn(
+                f'Localización DEGRADADA '
+                f'(spread_xy={self.belief_spread_xy:.3f} m², '
+                f'spread_θ={self.belief_spread_theta:.3f}). '
+                f'Robot detenido hasta re-converger.')
+
+        return degraded
     
     def _inflate_map(self, grid: OccupancyGrid) -> OccupancyGrid:
         """

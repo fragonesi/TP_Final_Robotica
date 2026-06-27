@@ -1,3 +1,5 @@
+map.pgm
+map.yaml
 package.xml
 setup.cfg
 setup.py

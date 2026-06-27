@@ -3,6 +3,7 @@ from rclpy.node import Node
 
 from nav_msgs.msg import OccupancyGrid
 from rclpy.qos import QoSProfile, QoSDurabilityPolicy
+from ament_index_python.packages import get_package_share_directory
 
 import yaml
 import numpy as np
@@ -15,7 +16,8 @@ class MapPublisher(Node):
     def __init__(self):
 
         super().__init__('map_publisher')
-        map_yaml = "/home/franny/Documentos/UdeSA/TP_Final_Robotica/map.yaml"
+        pkg_share = get_package_share_directory('tpf')
+        map_yaml = os.path.join(pkg_share, 'map.yaml')
 
         with open(map_yaml, 'r') as f:
             map_config = yaml.safe_load(f)
