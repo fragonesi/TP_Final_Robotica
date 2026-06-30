@@ -211,13 +211,15 @@ class RobotNavigator(Node):
 
     def state_machine_loop(self):
 
-        if not self._localization_ok():
+        # Durante ALIGNING el robot ya llegó al goal y está girando para alinearse.
+        # La posición es correcta; la dispersión angular del filtro durante rotación
+        # pura es esperada y no justifica interrumpir. Se omite el guard aquí.
+        if self.state is not State.ALIGNING and not self._localization_ok():
             self.get_logger().warn(
-                f'Localización no confiable. Robot detenido. '
+                f'Localización no confiable. '
                 f'Estado en espera: {self.state.name}.',
                 throttle_duration_sec=2.0)
             if self.state is not State.RELOCALIZING:
-                self.get_logger().info('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA.')
                 self._saved_state = self.state   # para volver después
                 self.transition_to(State.RELOCALIZING)
             self.run_relocalizing()
@@ -350,15 +352,15 @@ class RobotNavigator(Node):
                 self.get_logger().info('Alineación completa. Pasando a WAITING.')
                 self.transition_to(State.WAITING)
 
-    def run_relocalizing(self): # ***
+    def run_relocalizing(self):
         """Gira despacio en el lugar para alimentar al filtro con scans
-        nuevos hasta que la nube vuelva a concentrarse."""
-        self.get_logger().info('EN RELOCALIZING')
+        nuevos hasta que la nube vuelva a concentrarse.
+        Al converger vuelve al estado guardado antes de la interrupción."""
         if self._check_localization_converged("relocalizing"):
             self._stop_robot()
-            self.get_logger().info('Re-localizado. Retomo PLANNING.')
-            # replanear desde la pose actual: el path viejo ya no sirve
-            self.transition_to(State.PLANNING)
+            saved = getattr(self, '_saved_state', State.PLANNING)
+            self.get_logger().info(f'Re-localizado. Retomando {saved.name}.')
+            self.transition_to(saved)
             return
 
         cmd = Twist()

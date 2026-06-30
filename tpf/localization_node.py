@@ -76,14 +76,19 @@ class LocalizationNode(Node):
         self.get_logger().info(f'Inicialización: x={x:.2f}, y={y:.2f}, theta={theta:.2f}')
         self.get_logger().info(f'Primera particula: {self.pf.particles[0].x}, {self.pf.particles[0].y}')
 
+    # Umbral mínimo de traslación para calcular delta_rot1 con atan2.
+    # Por debajo de esto (rotación pura), atan2(dy, dx) es numéricamente
+    # inestable y produce delta_rot1 aleatorio que dispersa el filtro.
+    MIN_TRANS_FOR_ROT1 = 0.01  # metros
+
     def odom_callback(self,msg):
         if not self.initialized:
             return
-    
+
         if self.last_calc_odom is None:
             self.last_calc_odom = msg
             return
-        
+
         x = msg.pose.pose.position.x
         y = msg.pose.pose.position.y
 
@@ -96,7 +101,15 @@ class LocalizationNode(Node):
         delta_t = np.sqrt(dx**2 + dy**2)
         yaw = get_yaw(msg.pose.pose.orientation)
         last_yaw = get_yaw(self.last_calc_odom.pose.pose.orientation)
-        delta_rot1 = np.arctan2(dy, dx) - last_yaw
+
+        # Cuando la traslación es mínima (ej: rotación en el lugar durante ALIGNING),
+        # forzar delta_rot1 = 0 para evitar ruido de atan2 inestable.
+        # Toda la rotación va a delta_rot2. Igual que en Parte A / odom_delta_node.
+        if delta_t < self.MIN_TRANS_FOR_ROT1:
+            delta_rot1 = 0.0
+        else:
+            delta_rot1 = np.arctan2(dy, dx) - last_yaw
+
         delta_rot2 = yaw - last_yaw - delta_rot1
         odom = {'r1':delta_rot1, 'r2':delta_rot2, 't':delta_t}
         self.pf.move_particles(odom)
