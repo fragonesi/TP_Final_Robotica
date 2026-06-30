@@ -30,7 +30,7 @@ class LocalizationNode(Node):
 
     def __init__(self):
         super().__init__('localization_node')
-        self.pf = RobotFunctions(num_particles=50)
+        self.pf = RobotFunctions(num_particles=200)
         self.map = None
         self.likelihood = None
         self.last_calc_odom = None
@@ -48,6 +48,8 @@ class LocalizationNode(Node):
         self.initialized = False
         self.estimated_pose_pub = self.create_publisher(PoseStamped, '/estimated_pose', 10)
 
+        #PROBAR
+        self.best_particle_pub = self.create_publisher(PoseStamped, '/best_particle', 10)
 
     def map_callback(self,msg):
         self.map = msg
@@ -67,7 +69,7 @@ class LocalizationNode(Node):
         theta = get_yaw(q)
 
         for p in self.pf.particles:
-            p.set(np.random.normal(x,0.1), np.random.normal(y,0.1), np.random.normal(theta,0.1))
+            p.set(np.random.normal(x, 0.05), np.random.normal(y, 0.05), np.random.normal(theta, 0.05))
 
         self.initialized = True
 
@@ -104,7 +106,7 @@ class LocalizationNode(Node):
         if not self.initialized:
             self.get_logger().info("Esperando initialpose...")
             return
-        self.get_logger().info("Llegó scan")
+        # self.get_logger().info("Llegó scan")
 
         if self.map is None:
             self.get_logger().info("No hay mapa")
@@ -115,7 +117,6 @@ class LocalizationNode(Node):
             return
 
         self.pf.update_particles(msg, self.map, self.likelihood)
-        # self.publish_tf()
         self.publish_belief()
 
     def publish_estimated_pose(self):
@@ -135,6 +136,18 @@ class LocalizationNode(Node):
         msg.pose.orientation = yaw_to_quaternion(mean_theta)
         self.estimated_pose_pub.publish(msg)
 
+    def publish_best_particle(self):
+        if self.pf.best_particle is None:
+            return
+        bx, by, btheta = self.pf.best_particle
+        msg = PoseStamped()
+        msg.header.frame_id = "map"
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.pose.position.x = float(bx)
+        msg.pose.position.y = float(by)
+        msg.pose.orientation = yaw_to_quaternion(float(btheta))
+        self.best_particle_pub.publish(msg)
+
     def publish_belief(self):
         msg = PoseArray()
         msg.header.frame_id = "map"
@@ -149,20 +162,7 @@ class LocalizationNode(Node):
 
         self.belief_pub.publish(msg)
         self.publish_estimated_pose()
-
-    # def publish_tf(self):
-    #     x,y,theta = self.pf.get_selected_state()
-    #     tf = TransformStamped()
-    #     tf.header.stamp = self.get_clock().now().to_msg()
-    #     tf.header.frame_id = "map"
-    #     tf.child_frame_id = "calc_odom"
-
-    #     tf.transform.translation.x = x
-    #     tf.transform.translation.y = y
-
-    #     tf.transform.rotation = yaw_to_quaternion(theta)
-
-    #     self.tf_broadcaster.sendTransform(tf)
+        self.publish_best_particle()
 
 
 def main(args=None):

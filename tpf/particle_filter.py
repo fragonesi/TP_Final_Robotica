@@ -2,6 +2,7 @@ import numpy as np
 import random
 from copy import deepcopy
 
+#MI PARTICLE FILTER
 
 class particle():
 
@@ -49,6 +50,7 @@ class RobotFunctions:
 
     def __init__(self, num_particles=0):
         self.particles = []
+        self.best_particle = None
         if num_particles != 0:
             self.num_particles = num_particles
             self.particles = []
@@ -74,7 +76,7 @@ class RobotFunctions:
 
     def move_particles(self, deltas):
         for part in self.particles:
-            part.move_odom(deltas, [0.2, 0.2, 0.002, 0.002])
+            part.move_odom(deltas, [0.1, 0.1, 0.001, 0.001])
 
     def get_selected_state(self,):
         #hago el promedio ponderado de las particulas
@@ -113,25 +115,47 @@ class RobotFunctions:
 
             weights.append(weight)
 
-        #3. Resampleo las partículas en base a los pesos calculados con SUS
+        # ***
+        #3. Normalizo los pesos (común a las dos ramas)
         weights = np.array(weights)
         weights = np.exp(weights - np.max(weights))  # Evita problemas numéricos
         weights /= np.sum(weights)
+
+        # Guardo los pesos en las partículas y registro la mejor (común a ambas ramas)
         for p, w in zip(self.particles, weights):
             p.set_weight(w)
 
-        cumulative_sum = np.cumsum(weights)
-        N = self.num_particles
-        seed = np.random.uniform(0, 1/N)
-        new_particles = []
-        i = 0
-        for j in range(N):
-            u = seed + j * (1/N)
-            while u > cumulative_sum[i]:
-                i += 1
-            new_particles.append(deepcopy(self.particles[i]))
+        best_idx = int(np.argmax(weights))
+        bp = self.particles[best_idx]
+        self.best_particle = (bp.x, bp.y, bp.orientation)
 
-        self.particles = new_particles
+        # Decido si resamplear según Neff
+        neff = 1.0 / np.sum(weights**2)
+
+        if neff < self.num_particles / 0.7:
+            # --- Resampleo con SUS + jitter ---
+            cumulative_sum = np.cumsum(weights)
+            N = self.num_particles
+            seed = np.random.uniform(0, 1/N)
+            new_particles = []
+            i = 0
+            for j in range(N):
+                u = seed + j * (1/N)
+                while u > cumulative_sum[i]:
+                    i += 1
+                new_p = deepcopy(self.particles[i])
+                new_p.x += np.random.normal(0, 0.01)
+                new_p.y += np.random.normal(0, 0.01)
+                new_p.orientation += np.random.normal(0, 0.02)
+                new_particles.append(new_p)
+
+            self.particles = new_particles
+            # tras resamplear, todas las partículas pesan igual
+            for p in self.particles:
+                p.set_weight(1.0 / self.num_particles)
+        # else: no resampleo. Los pesos ya quedaron guardados arriba.
+
+            
 
     def scan_refererence(self, ranges, range_min, range_max, angle_min, angle_max, angle_increment, last_odom):
         tx, ty, theta = last_odom
@@ -142,7 +166,7 @@ class RobotFunctions:
         angles = angles[valid]
         local_x = ranges * np.cos(angles)
         local_y = ranges * np.sin(angles)
-        t = theta + np.pi
+        t = theta #+ np.pi
         cos_t = np.cos(t)
         sin_t = np.sin(t)
         global_x = tx + local_x * cos_t - local_y * sin_t

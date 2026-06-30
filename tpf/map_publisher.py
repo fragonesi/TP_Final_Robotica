@@ -29,6 +29,8 @@ class MapPublisher(Node):
         img = Image.open(image_path)
         img = np.array(img)
         img = np.flipud(img)
+        # img = np.fliplr(img)
+        # img = np.rot90(img, k=2)
         self.map_msg = OccupancyGrid()
         self.map_msg.header.frame_id = "map"
         self.map_msg.info.resolution = map_config['resolution']

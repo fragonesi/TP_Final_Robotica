@@ -28,6 +28,7 @@ class State(Enum):
     WALKING    = auto()
     AVOIDING   = auto()
     ALIGNING   = auto()
+    RELOCALIZING = auto()
 
 
 # ---------------------------------------------------------------------------
@@ -50,15 +51,19 @@ class RobotNavigator(Node):
         self.planned_path: list = [] # lista de waypoints
         self.current_waypoint_idx: int = 0
         self.new_goal_received: bool = False # se usa para goal nuevo durante WALKING
+        self._avoid_state = 'FRENAR'
+        self._avoid_yaw_start = None
+        self.AVOID_ROTATION_ANGLE = math.radians(110.0)
+        self.current_yaw = 0.0
 
         # --- Detección de obstáculos ---
         self.last_scan: LaserScan | None = None
         self.obstacle_ahead: bool = False # flag de si hay un obstaculo delante
-        self.OBSTACLE_DISTANCE_THRESHOLD = 0.4 # en metros
+        self.OBSTACLE_DISTANCE_THRESHOLD = 0.15 # en metros
         self.CONE_HALF_ANGLE = math.radians(45) # ±45°: un cono delantero de un total de 90°
 
         # --- Evasión reactiva de obstáculos ---
-        self.AVOID_ANGULAR_SPEED = 0.5 # rad/s — velocidad de giro al esquivar
+        self.AVOID_ANGULAR_SPEED = 0.05 # rad/s — velocidad de giro al esquivar
         self.AVOID_EVAL_HALF_ANGLE = math.radians(90)  # +-90°: sector que se mira para elegir lado
         self.AVOID_CLEAR_MARGIN = 1.25  # el frente se da por libre si la dist. mínima supera OBSTACLE_DISTANCE_THRESHOLD x este margen
         self._avoid_turn_sign = 0.0 # +1 izquierda / -1 derecha
@@ -71,8 +76,8 @@ class RobotNavigator(Node):
         self.LOOKAHEAD_DISTANCE = 0.4   # metros
         self.LINEAR_SPEED       = 0.15  # m/s — constante
         self.GOAL_TOLERANCE     = 0.10  # metros — distancia para considerar que llegó
-        self.ANGLE_TOLERANCE    = math.radians(5.0)  # ±5° para considerar alineado
-        self.ANGULAR_SPEED      = 0.3   # rad/s — velocidad de giro en ALIGNING
+        self.ANGLE_TOLERANCE    = math.radians(12.0)  # ±5° para considerar alineado
+        self.ANGULAR_SPEED      = 0.1   # rad/s — velocidad de giro en ALIGNING
 
         # --- Localización ---
         # nube del /belief: 2 métricas (spread_xy, spread_theta)
@@ -115,9 +120,20 @@ class RobotNavigator(Node):
         self.inflated_map = self._inflate_map(msg)
         self.get_logger().info('Mapa recibido e inflado.')
 
-    def cb_pose(self, msg: Odometry):
-        self.current_pose = msg
+    # def cb_pose(self, msg: PoseWithCovarianceStamped):
+    #     # Convertir a PoseStamped para uniformidad (*** y que hacemos con covariance?)
+    #     ps = PoseStamped()
+    #     ps.header = msg.header
+    #     ps.pose = msg.pose.pose
+    #     self.current_pose = ps
 
+    def cb_pose(self, msg: PoseStamped):
+        self.current_pose = msg
+        q = msg.pose.orientation
+        siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
+        cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+        self.current_yaw = math.atan2(siny_cosp, cosy_cosp)
+        
     def cb_goal(self, msg: PoseStamped):
         self.get_logger().info(f'Nuevo goal recibido: ({msg.pose.position.x:.2f}, {msg.pose.position.y:.2f})')
         self.goal_pose = msg
@@ -196,11 +212,15 @@ class RobotNavigator(Node):
     def state_machine_loop(self):
 
         if not self._localization_ok():
-            self._stop_robot()
             self.get_logger().warn(
                 f'Localización no confiable. Robot detenido. '
                 f'Estado en espera: {self.state.name}.',
                 throttle_duration_sec=2.0)
+            if self.state is not State.RELOCALIZING:
+                self.get_logger().info('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA.')
+                self._saved_state = self.state   # para volver después
+                self.transition_to(State.RELOCALIZING)
+            self.run_relocalizing()
             return
 
         match self.state:
@@ -214,6 +234,8 @@ class RobotNavigator(Node):
                 self.run_avoiding()
             case State.ALIGNING:
                 self.run_aligning()
+            case State.RELOCALIZING:
+                self.run_relocalizing()
 
     # Implementación de cada estado -----------------------------------------------------------------------
 
@@ -224,13 +246,15 @@ class RobotNavigator(Node):
         True solo si la localización es confiable: el filtro convergió Y no está degradado.
         False: el loop frena el robot y no ejecuta el estado actual.
         """
-        return (self._check_localization_converged() and not self._localization_degraded())
+        return (self._check_localization_converged("localization_ok") and not self._localization_degraded())
 
     def run_waiting(self):
         """
         Espera un goal del usuario.
         Transición → PLANNING cuando llega un goal.
         """
+        self.get_logger().info(f"[WAITING STATE] new_goal_received: {self.new_goal_received}")
+
         if self.new_goal_received:
             self.new_goal_received = False
             self.get_logger().info('Goal recibido. Pasando a PLANNING.')
@@ -313,6 +337,9 @@ class RobotNavigator(Node):
         """
         alignment_done = self._align_to_goal_angle()
 
+        self.get_logger().info(f"[ALIGNING STATE] en aligning: {self.new_goal_received}")
+
+
         if alignment_done:
             self._stop_robot()
             if self.new_goal_received:
@@ -323,6 +350,22 @@ class RobotNavigator(Node):
                 self.get_logger().info('Alineación completa. Pasando a WAITING.')
                 self.transition_to(State.WAITING)
 
+    def run_relocalizing(self): # ***
+        """Gira despacio en el lugar para alimentar al filtro con scans
+        nuevos hasta que la nube vuelva a concentrarse."""
+        self.get_logger().info('EN RELOCALIZING')
+        if self._check_localization_converged("relocalizing"):
+            self._stop_robot()
+            self.get_logger().info('Re-localizado. Retomo PLANNING.')
+            # replanear desde la pose actual: el path viejo ya no sirve
+            self.transition_to(State.PLANNING)
+            return
+
+        cmd = Twist()
+        cmd.linear.x = 0.0
+        cmd.angular.z = 0.3   # giro suave para acumular información del scan
+        self.pub_cmd_vel.publish(cmd)
+
     # Para las transiciones -----------------------------------------------------------------------
 
     def transition_to(self, new_state: State):
@@ -331,7 +374,7 @@ class RobotNavigator(Node):
 
     # Stubs -------------------------------------------------
 
-    def _check_localization_converged(self) -> bool:
+    def _check_localization_converged(self, msg: str) -> bool:
         """
         True si la nube de partículas está suficientemente concentrada como
         para confiar en la pose estimada.
@@ -345,7 +388,8 @@ class RobotNavigator(Node):
         (típicamente tras fijar el 2D Pose Estimate en RViz).
         """
         if self.belief_spread_xy is None or self.belief_spread_theta is None:
-            return False
+            #self.get_logger().info('1')
+            return True
 
         # Si ya estaba convergido, mantenerlo (la degradación se evalúa aparte).
         if self.localization_converged:
@@ -356,10 +400,12 @@ class RobotNavigator(Node):
                 and self.belief_spread_theta < self.CONV_THETA_THRESHOLD):
             self.localization_converged = True
             self.get_logger().info(
-                f'Localización convergió '
+                f'Localización convergió en {msg}'
                 f'(spread_xy={self.belief_spread_xy:.3f} m², '
                 f'spread_θ={self.belief_spread_theta:.3f}).')
             return True
+        
+        
 
         return False
 
@@ -679,55 +725,85 @@ class RobotNavigator(Node):
         return cmd
 
     def _execute_avoidance_maneuver(self) -> bool:
-        """
-        Política de evasión reactiva para obstáculos NO mapeados.
-
-        """
         if self.last_scan is None:
-            # Sin datos del LIDAR freno y espero el próximo scan.
             self._stop_robot()
             return False
 
-        # 1) Chequeo de si el frente ya esta limpio:
-        if self._front_is_clear():
-            self._stop_robot()
-            self._avoid_turn_sign = 0.0  # reseteo para la próxima
-            self.get_logger().info('Frente despejado. Evasión completa.')
-            return True
-
-        # 2) Elegir hacia qué lado girar
-        if self._avoid_turn_sign == 0.0:
+        # Inicializar el yaw de referencia al comenzar la maniobra
+        if self._avoid_yaw_start is None:
+            self._avoid_yaw_start = self._get_yaw_from_pose(self.current_pose)
             self._avoid_turn_sign = self._pick_clearer_side()
             lado = 'izquierda' if self._avoid_turn_sign > 0 else 'derecha'
-            self.get_logger().info(f'Obstáculo: girando hacia la {lado} para esquivar.')
+            self.get_logger().info(f'Obstáculo: girando 110° hacia la {lado}.')
 
-        # Girar en el lugar hacia el lado elegido
+        # ¿Cuánto giré desde el inicio de la maniobra?
+        yaw_now = self._get_yaw_from_pose(self.current_pose)
+        delta = abs(math.atan2(math.sin(yaw_now - self._avoid_yaw_start),
+                               math.cos(yaw_now - self._avoid_yaw_start)))
+
+        if delta >= self.AVOID_ROTATION_ANGLE:
+            self._stop_robot()
+            self._avoid_turn_sign = 0.0
+            self._avoid_yaw_start = None   # reset para la próxima
+            self.get_logger().info('Rotación de evasión completa.')
+            return True
+
         cmd = Twist()
         cmd.linear.x = 0.0
         cmd.angular.z = self._avoid_turn_sign * self.AVOID_ANGULAR_SPEED
         self.pub_cmd_vel.publish(cmd)
-
         return False
 
-    def _front_is_clear(self) -> bool:
-        """
-        True si NINGÚN rayo válido del cono frontal (±CONE_HALF_ANGLE) está más
-        cerca que OBSTACLE_DISTANCE_THRESHOLD * AVOID_CLEAR_MARGIN.
+    # def _execute_avoidance_maneuver(self) -> bool:
+    #     """
+    #     Política de evasión reactiva para obstáculos NO mapeados.
 
-        El margen extra es para evitar declarar "libre" cuando el obstáculo apenas salió del umbral de detección.
-        """
-        msg = self.last_scan
-        clear_dist = self.OBSTACLE_DISTANCE_THRESHOLD * self.AVOID_CLEAR_MARGIN
+    #     """
+    #     if self.last_scan is None:
+    #         # Sin datos del LIDAR freno y espero el próximo scan.
+    #         self._stop_robot()
+    #         return False
 
-        angle = msg.angle_min
-        for r in msg.ranges:
-            angle_norm = math.atan2(math.sin(angle), math.cos(angle))
-            if abs(angle_norm) <= self.CONE_HALF_ANGLE:
-                if (r > msg.range_min and r < msg.range_max
-                        and math.isfinite(r) and r < clear_dist):
-                    return False
-            angle += msg.angle_increment
-        return True
+    #     # 1) Chequeo de si el frente ya esta limpio:
+    #     if self._front_is_clear():
+    #         self._stop_robot()
+    #         self._avoid_turn_sign = 0.0  # reseteo para la próxima
+    #         self.get_logger().info('Frente despejado. Evasión completa.')
+    #         return True
+
+    #     # 2) Elegir hacia qué lado girar
+    #     if self._avoid_turn_sign == 0.0:
+    #         self._avoid_turn_sign = self._pick_clearer_side()
+    #         lado = 'izquierda' if self._avoid_turn_sign > 0 else 'derecha'
+    #         self.get_logger().info(f'Obstáculo: girando hacia la {lado} para esquivar.')
+
+    #     # Girar en el lugar hacia el lado elegido
+    #     cmd = Twist()
+    #     cmd.linear.x = 0.0
+    #     cmd.angular.z = self._avoid_turn_sign * self.AVOID_ANGULAR_SPEED
+    #     self.pub_cmd_vel.publish(cmd)
+
+    #     return False
+
+    # def _front_is_clear(self) -> bool:
+    #     """
+    #     True si NINGÚN rayo válido del cono frontal (±CONE_HALF_ANGLE) está más
+    #     cerca que OBSTACLE_DISTANCE_THRESHOLD * AVOID_CLEAR_MARGIN.
+
+    #     El margen extra es para evitar declarar "libre" cuando el obstáculo apenas salió del umbral de detección.
+    #     """
+    #     msg = self.last_scan
+    #     clear_dist = self.OBSTACLE_DISTANCE_THRESHOLD * self.AVOID_CLEAR_MARGIN
+
+    #     angle = msg.angle_min
+    #     for r in msg.ranges:
+    #         angle_norm = math.atan2(math.sin(angle), math.cos(angle))
+    #         if abs(angle_norm) <= self.CONE_HALF_ANGLE:
+    #             if (r > msg.range_min and r < msg.range_max
+    #                     and math.isfinite(r) and r < clear_dist):
+    #                 return False
+    #         angle += msg.angle_increment
+    #     return True
 
     def _pick_clearer_side(self) -> float:
         """
@@ -806,7 +882,9 @@ class RobotNavigator(Node):
         que la pose ya no es confiable.
 
         """
+
         if self.belief_spread_xy is None or self.belief_spread_theta is None:
+            #self.get_logger().info('3')
             return False
 
         degraded = (self.belief_spread_xy > self.DEGRADED_XY_THRESHOLD
@@ -820,7 +898,6 @@ class RobotNavigator(Node):
                 f'(spread_xy={self.belief_spread_xy:.3f} m², '
                 f'spread_θ={self.belief_spread_theta:.3f}). '
                 f'Robot detenido hasta re-converger.')
-
         return degraded
     
     def _inflate_map(self, grid: OccupancyGrid) -> OccupancyGrid:
