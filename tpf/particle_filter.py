@@ -132,7 +132,7 @@ class RobotFunctions:
         # Decido si resamplear según Neff
         neff = 1.0 / np.sum(weights**2)
 
-        if neff < self.num_particles / 0.7:
+        if neff < self.num_particles * 0.7:
             # --- Resampleo con SUS + jitter ---
             cumulative_sum = np.cumsum(weights)
             N = self.num_particles

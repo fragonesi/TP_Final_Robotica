@@ -40,7 +40,7 @@ class LocalizationNode(Node):
         self.create_subscription(OccupancyGrid, '/map', self.map_callback, qos_map)
         self.create_subscription(OccupancyGrid, '/likelihood_map', self.likelihood_callback, qos_map)     
         self.create_subscription(PoseWithCovarianceStamped, '/initialpose', self.initialpose_callback, 10)
-        self.create_subscription(Odometry, '/calc_odom', self.odom_callback, 10)
+        self.create_subscription(Odometry, '/odom', self.odom_callback, 10)
         self.create_subscription(LaserScan, '/scan', self.scan_callback, 10)
         
         self.belief_pub = self.create_publisher(PoseArray, '/belief', 10)
