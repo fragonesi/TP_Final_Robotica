@@ -1,0 +1,22 @@
+# Plantilla de calibración de cámara.
+# Completen "data" con los valores reales que les dio la cátedra
+# (matriz K y coeficientes de distorsión del TurtleBot4 #0).
+#
+# camera_matrix.data va en orden fila por fila (row-major), 9 valores:
+#   [fx,  0, cx,
+#     0, fy, cy,
+#     0,  0,  1]
+#
+# distortion_coefficients.data: típicamente [k1, k2, p1, p2, k3]
+
+camera_matrix:
+  rows: 3
+  cols: 3
+  data: [600.0, 0.0, 320.0,
+         0.0, 600.0, 240.0,
+         0.0, 0.0, 1.0]
+
+distortion_coefficients:
+  rows: 1
+  cols: 5
+  data: [0.0, 0.0, 0.0, 0.0, 0.0]
