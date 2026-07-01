@@ -1,5 +1,14 @@
 <sdf version='1.7'>
   <world name='default'>
+    <!-- Publica gazebo_msgs/ModelStates en /gazebo/model_states: pose
+         "verdad-terreno" que usa aruco_sim_pkg/virtual_aruco_sensor_node
+         (Sistema 3) para no confundir drift de /odom con ruido de sensor. -->
+    <plugin name='gazebo_ros_state' filename='libgazebo_ros_state.so'>
+      <ros>
+        <namespace>/gazebo</namespace>
+      </ros>
+      <update_rate>30.0</update_rate>
+    </plugin>
     <model name='slippery_ground'>
       <static>1</static>
       <link name='link'>
