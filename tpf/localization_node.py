@@ -40,7 +40,7 @@ class LocalizationNode(Node):
         self.create_subscription(OccupancyGrid, '/map', self.map_callback, qos_map)
         self.create_subscription(OccupancyGrid, '/likelihood_map', self.likelihood_callback, qos_map)     
         self.create_subscription(PoseWithCovarianceStamped, '/initialpose', self.initialpose_callback, 10)
-        self.create_subscription(Odometry, '/odom', self.odom_callback, 10)
+        self.create_subscription(Odometry, '/calc_odom', self.odom_callback, 10)
         self.create_subscription(LaserScan, '/scan', self.scan_callback, 10)
         
         self.belief_pub = self.create_publisher(PoseArray, '/belief', 10)
@@ -76,19 +76,14 @@ class LocalizationNode(Node):
         self.get_logger().info(f'Inicialización: x={x:.2f}, y={y:.2f}, theta={theta:.2f}')
         self.get_logger().info(f'Primera particula: {self.pf.particles[0].x}, {self.pf.particles[0].y}')
 
-    # Umbral mínimo de traslación para calcular delta_rot1 con atan2.
-    # Por debajo de esto (rotación pura), atan2(dy, dx) es numéricamente
-    # inestable y produce delta_rot1 aleatorio que dispersa el filtro.
-    MIN_TRANS_FOR_ROT1 = 0.01  # metros
-
     def odom_callback(self,msg):
         if not self.initialized:
             return
-
+    
         if self.last_calc_odom is None:
             self.last_calc_odom = msg
             return
-
+        
         x = msg.pose.pose.position.x
         y = msg.pose.pose.position.y
 
@@ -102,15 +97,18 @@ class LocalizationNode(Node):
         yaw = get_yaw(msg.pose.pose.orientation)
         last_yaw = get_yaw(self.last_calc_odom.pose.pose.orientation)
 
-        # Cuando la traslación es mínima (ej: rotación en el lugar durante ALIGNING),
-        # forzar delta_rot1 = 0 para evitar ruido de atan2 inestable.
-        # Toda la rotación va a delta_rot2. Igual que en Parte A / odom_delta_node.
-        if delta_t < self.MIN_TRANS_FOR_ROT1:
+        MIN_TRANS = 0.01
+        if delta_t < MIN_TRANS:
             delta_rot1 = 0.0
+            delta_rot2 = yaw - last_yaw
         else:
             delta_rot1 = np.arctan2(dy, dx) - last_yaw
+            delta_rot2 = yaw - last_yaw - delta_rot1
 
-        delta_rot2 = yaw - last_yaw - delta_rot1
+        #Normalizo a -pi, pi para evitar problemas al cruzar el límite +-pi
+        delta_rot1 = np.arctan2(np.sin(delta_rot1), np.cos(delta_rot1))
+        delta_rot2 = np.arctan2(np.sin(delta_rot2), np.cos(delta_rot2))
+
         odom = {'r1':delta_rot1, 'r2':delta_rot2, 't':delta_t}
         self.pf.move_particles(odom)
         self.last_calc_odom = msg
@@ -132,14 +130,40 @@ class LocalizationNode(Node):
         self.pf.update_particles(msg, self.map, self.likelihood)
         self.publish_belief()
 
-    def publish_estimated_pose(self):
-        xs = [p.x for p in self.pf.particles]
-        ys = [p.y for p in self.pf.particles]
-        thetas = [p.orientation for p in self.pf.particles]
+    # def publish_estimated_pose(self):
+    #     xs = [p.x for p in self.pf.particles]
+    #     ys = [p.y for p in self.pf.particles]
+    #     thetas = [p.orientation for p in self.pf.particles]
 
-        mean_x = np.mean(xs)
-        mean_y = np.mean(ys)
-        mean_theta = np.arctan2(np.mean(np.sin(thetas)), np.mean(np.cos(thetas)))
+    #     mean_x = np.mean(xs)
+    #     mean_y = np.mean(ys)
+    #     mean_theta = np.arctan2(np.mean(np.sin(thetas)), np.mean(np.cos(thetas)))
+
+    #     msg = PoseStamped()
+    #     msg.header.frame_id = "map"
+    #     msg.header.stamp = self.get_clock().now().to_msg()
+    #     msg.pose.position.x = mean_x
+    #     msg.pose.position.y = mean_y
+    #     msg.pose.orientation = yaw_to_quaternion(mean_theta)
+    #     self.estimated_pose_pub.publish(msg)
+    
+    def publish_estimated_pose(self):
+        weights = np.array([p.weight for p in self.pf.particles])
+        total = weights.sum()
+        if total < 1e-10:
+            return
+        weights = weights / total
+
+        xs = np.array([p.x for p in self.pf.particles])
+        ys = np.array([p.y for p in self.pf.particles])
+        thetas = np.array([p.orientation for p in self.pf.particles])
+
+        mean_x = float(np.sum(weights * xs))
+        mean_y = float(np.sum(weights * ys))
+        mean_theta = float(np.arctan2(
+            np.sum(weights * np.sin(thetas)),
+            np.sum(weights * np.cos(thetas))
+        ))
 
         msg = PoseStamped()
         msg.header.frame_id = "map"

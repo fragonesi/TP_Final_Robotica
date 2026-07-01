@@ -2,7 +2,6 @@ import numpy as np
 import random
 from copy import deepcopy
 
-#MI PARTICLE FILTER
 
 class particle():
 
@@ -76,7 +75,8 @@ class RobotFunctions:
 
     def move_particles(self, deltas):
         for part in self.particles:
-            part.move_odom(deltas, [0.1, 0.1, 0.001, 0.001])
+            # part.move_odom(deltas, [0.1, 0.1, 0.001, 0.001])
+            part.move_odom(deltas, [15.0, 15.0, 0.2, 0.2])
 
     def get_selected_state(self,):
         #hago el promedio ponderado de las particulas
@@ -107,7 +107,7 @@ class RobotFunctions:
 
             if len(xi) > 0:
                 likelihood = likelihood_grid[yi, xi] / 100.0
-                log_vals = np.log(likelihood + 1e-9)
+                log_vals = np.log(likelihood + 0.001)
                 weight = np.sum(log_vals)
 
             else:
@@ -115,50 +115,45 @@ class RobotFunctions:
 
             weights.append(weight)
 
-        # ***
-        #3. Normalizo los pesos (común a las dos ramas)
+        #3. Ressampleo las partículas en base a los pesos calculados con SUS
         weights = np.array(weights)
-        weights = np.exp(weights - np.max(weights))  # Evita problemas numéricos
+        weights = np.exp(weights - np.max(weights))
         weights /= np.sum(weights)
 
-        # Guardo los pesos en las partículas y registro la mejor (común a ambas ramas)
         for p, w in zip(self.particles, weights):
             p.set_weight(w)
 
-        best_idx = int(np.argmax(weights))
-        bp = self.particles[best_idx]
-        self.best_particle = (bp.x, bp.y, bp.orientation)
+        cumulative_sum = np.cumsum(weights)
+        N = self.num_particles
+        seed = np.random.uniform(0, 1/N)
+        new_particles = []
+        i = 0
+        for j in range(N):
+            u = seed + j * (1/N)
+            while u > cumulative_sum[i]:
+                i += 1
+            new_particles.append(deepcopy(self.particles[i]))
 
-        # Decido si resamplear según Neff
-        neff = 1.0 / np.sum(weights**2)
-
-        if neff < self.num_particles * 0.7:
-            # --- Resampleo con SUS + jitter ---
-            cumulative_sum = np.cumsum(weights)
-            N = self.num_particles
-            seed = np.random.uniform(0, 1/N)
-            new_particles = []
-            i = 0
-            for j in range(N):
-                u = seed + j * (1/N)
-                while u > cumulative_sum[i]:
-                    i += 1
-                new_p = deepcopy(self.particles[i])
-                new_p.x += np.random.normal(0, 0.01)
-                new_p.y += np.random.normal(0, 0.01)
-                new_p.orientation += np.random.normal(0, 0.02)
-                new_particles.append(new_p)
-
-            self.particles = new_particles
-            # tras resamplear, todas las partículas pesan igual
-            for p in self.particles:
-                p.set_weight(1.0 / self.num_particles)
-        # else: no resampleo. Los pesos ya quedaron guardados arriba.
-
-            
+        self.particles = new_particles
 
     def scan_refererence(self, ranges, range_min, range_max, angle_min, angle_max, angle_increment, last_odom):
         tx, ty, theta = last_odom
+        # DIAGNÓSTICO: imprimir el rayo frontal (ángulo ~0°, si es válido)
+        idx0 = 0
+        r0 = np.array(ranges)[idx0]
+        if range_min < r0 < range_max:
+            lx = r0 * np.cos(0)
+            ly = r0 * np.sin(0)
+            # Con +pi
+            gx_pi = tx + lx * np.cos(theta + np.pi) - ly * np.sin(theta + np.pi)
+            gy_pi = ty + lx * np.sin(theta + np.pi) + ly * np.cos(theta + np.pi)
+            # Sin +pi
+            gx = tx + lx * np.cos(theta) - ly * np.sin(theta)
+            gy = ty + lx * np.sin(theta) + ly * np.cos(theta)
+            print(f"Particle=({tx:.2f},{ty:.2f},{np.degrees(theta):.1f}°) "
+                f"Ray0 range={r0:.2f}m → CON+pi=({gx_pi:.2f},{gy_pi:.2f}) "
+                f"SIN+pi=({gx:.2f},{gy:.2f})")
+            
         ranges = np.array(ranges)
         angles = angle_min + np.arange(len(ranges)) * angle_increment
         valid = (ranges > range_min) & (ranges < range_max)

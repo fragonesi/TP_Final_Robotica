@@ -16,6 +16,7 @@ from enum import Enum, auto
 from nav_msgs.msg import OccupancyGrid, Path, Odometry
 from geometry_msgs.msg import PoseStamped, PoseArray, Twist
 from sensor_msgs.msg import LaserScan
+from visualization_msgs.msg import Marker
 
 
 # ---------------------------------------------------------------------------
@@ -28,7 +29,7 @@ class State(Enum):
     WALKING    = auto()
     AVOIDING   = auto()
     ALIGNING   = auto()
-    RELOCALIZING = auto()
+    # RELOCALIZING = auto()
 
 
 # ---------------------------------------------------------------------------
@@ -53,31 +54,33 @@ class RobotNavigator(Node):
         self.new_goal_received: bool = False # se usa para goal nuevo durante WALKING
         self._avoid_state = 'FRENAR'
         self._avoid_yaw_start = None
-        self.AVOID_ROTATION_ANGLE = math.radians(110.0)
+        self.AVOID_ROTATION_ANGLE = math.radians(80.0)
         self.current_yaw = 0.0
+        self._current_path_msg = None
+        self._avoid_cooldown_until = 0.0  # timestamp en segundos
 
         # --- Detección de obstáculos ---
         self.last_scan: LaserScan | None = None
         self.obstacle_ahead: bool = False # flag de si hay un obstaculo delante
-        self.OBSTACLE_DISTANCE_THRESHOLD = 0.15 # en metros
+        self.OBSTACLE_DISTANCE_THRESHOLD = 0.2 # en metros 
         self.CONE_HALF_ANGLE = math.radians(45) # ±45°: un cono delantero de un total de 90°
 
         # --- Evasión reactiva de obstáculos ---
-        self.AVOID_ANGULAR_SPEED = 0.05 # rad/s — velocidad de giro al esquivar
+        self.AVOID_ANGULAR_SPEED = 0.5 # rad/s — velocidad de giro al esquivar
         self.AVOID_EVAL_HALF_ANGLE = math.radians(90)  # +-90°: sector que se mira para elegir lado
         self.AVOID_CLEAR_MARGIN = 1.25  # el frente se da por libre si la dist. mínima supera OBSTACLE_DISTANCE_THRESHOLD x este margen
         self._avoid_turn_sign = 0.0 # +1 izquierda / -1 derecha
 
         # --- Inflar el mapa ---
         self.inflated_map: OccupancyGrid | None = None
-        self.INFLATION_RADIUS_CELLS = 3  # 3 celdas × 0.05 m = 0.15 m de margen
+        self.INFLATION_RADIUS_CELLS = 4  # 3 celdas × 0.05 m = 0.15 m de margen
 
         # --- Pure Pursuit ---
-        self.LOOKAHEAD_DISTANCE = 0.4   # metros
-        self.LINEAR_SPEED       = 0.15  # m/s — constante
+        self.LOOKAHEAD_DISTANCE = 0.2   # metros
+        self.LINEAR_SPEED       = 0.1  # m/s — constante
         self.GOAL_TOLERANCE     = 0.10  # metros — distancia para considerar que llegó
         self.ANGLE_TOLERANCE    = math.radians(12.0)  # ±5° para considerar alineado
-        self.ANGULAR_SPEED      = 0.1   # rad/s — velocidad de giro en ALIGNING
+        self.ANGULAR_SPEED      = 0.3   # rad/s — velocidad de giro en ALIGNING
 
         # --- Localización ---
         # nube del /belief: 2 métricas (spread_xy, spread_theta)
@@ -108,7 +111,10 @@ class RobotNavigator(Node):
 
         # Publicadores ---------
         self.pub_cmd_vel = self.create_publisher(Twist, '/cmd_vel', 10)
-        self.pub_path    = self.create_publisher(Path, '/planned_path', 1)
+        qos_latched = QoSProfile(depth=1, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
+        self.pub_path = self.create_publisher(Path, '/planned_path', qos_latched)
+        # self.pub_path    = self.create_publisher(Path, '/planned_path', 1)
+        self.pub_lookahead = self.create_publisher(Marker, '/lookahead_point', 10)
 
         # Timer para la máquina de estados ---------
         self.timer = self.create_timer(0.1, self.state_machine_loop)  # 10 Hz
@@ -149,6 +155,31 @@ class RobotNavigator(Node):
 
         # Guardo el mensaje que recibo como el último scan.
         self.last_scan = msg
+
+        # === DEBUG ===
+        # 1) Metadata del scan (una vez te basta)
+        if not hasattr(self, '_scan_debug_printed'):
+            self.get_logger().info(
+                f'[SCAN META] frame_id={msg.header.frame_id} '
+                f'angle_min={math.degrees(msg.angle_min):.1f}° '
+                f'angle_max={math.degrees(msg.angle_max):.1f}° '
+                f'incr={math.degrees(msg.angle_increment):.2f}° '
+                f'n_rays={len(msg.ranges)}'
+            )
+            self._scan_debug_printed = True
+
+        # 2) ¿Dónde está el obstáculo más cercano?
+        valid = [(i, r) for i, r in enumerate(msg.ranges)
+                if math.isfinite(r) and msg.range_min < r < msg.range_max]
+        if valid:
+            i_min, r_min = min(valid, key=lambda x: x[1])
+            angle_min_obs = msg.angle_min + i_min * msg.angle_increment
+            angle_norm = math.degrees(math.atan2(math.sin(angle_min_obs),
+                                                math.cos(angle_min_obs)))
+            self.get_logger().info(
+                f'[SCAN] mín en idx={i_min} ángulo={angle_norm:+.1f}° dist={r_min:.2f}m'
+            )
+        # === FIN DEBUG ===
  
         # Solo detecto cuando camino:
         if self.state not in (State.WALKING,):
@@ -156,22 +187,23 @@ class RobotNavigator(Node):
 
         angle = msg.angle_min # arranco en el mínimo ángulo
         obstacle_found = False # flag
+        min_front_dist = float('inf')
  
         for r in msg.ranges:
-            # Normalizo el ángulo al rango [-π, π]
             angle_norm = math.atan2(math.sin(angle), math.cos(angle))
- 
-            # Me pregunto si está dentro del cono frontal de ±45°:
+            
             if abs(angle_norm) <= self.CONE_HALF_ANGLE:
-                # Descarto lecturas inválidas (0.0, inf, nan)
-                if (r > msg.range_min
-                        and r < msg.range_max
-                        and math.isfinite(r)
-                        and r < self.OBSTACLE_DISTANCE_THRESHOLD):
-                    obstacle_found = True
-                    break 
+                if r > msg.range_min and r < msg.range_max and math.isfinite(r):
+                    min_front_dist = min(min_front_dist, r)
+                    if r < self.OBSTACLE_DISTANCE_THRESHOLD:
+                        obstacle_found = True
+                        break
  
             angle += msg.angle_increment
+        
+        self.get_logger().info(
+        f'[SCAN] min_front={min_front_dist:.2f}m  threshold={self.OBSTACLE_DISTANCE_THRESHOLD}m  found={obstacle_found}',
+        throttle_duration_sec=0.5)
  
         self.obstacle_ahead = obstacle_found
 
@@ -211,18 +243,16 @@ class RobotNavigator(Node):
 
     def state_machine_loop(self):
 
-        # Durante ALIGNING el robot ya llegó al goal y está girando para alinearse.
-        # La posición es correcta; la dispersión angular del filtro durante rotación
-        # pura es esperada y no justifica interrumpir. Se omite el guard aquí.
-        if self.state is not State.ALIGNING and not self._localization_ok():
+        if not self._localization_ok():
             self.get_logger().warn(
-                f'Localización no confiable. '
+                f'Localización no confiable. Robot detenido. '
                 f'Estado en espera: {self.state.name}.',
                 throttle_duration_sec=2.0)
-            if self.state is not State.RELOCALIZING:
-                self._saved_state = self.state   # para volver después
-                self.transition_to(State.RELOCALIZING)
-            self.run_relocalizing()
+            # if self.state is not State.RELOCALIZING:
+            #     self.get_logger().info('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA.')
+            #     self._saved_state = self.state   # para volver después
+            #     self.transition_to(State.RELOCALIZING)
+            # self.run_relocalizing()
             return
 
         match self.state:
@@ -236,8 +266,8 @@ class RobotNavigator(Node):
                 self.run_avoiding()
             case State.ALIGNING:
                 self.run_aligning()
-            case State.RELOCALIZING:
-                self.run_relocalizing()
+            # case State.RELOCALIZING:
+            #     self.run_relocalizing()
 
     # Implementación de cada estado -----------------------------------------------------------------------
 
@@ -255,7 +285,6 @@ class RobotNavigator(Node):
         Espera un goal del usuario.
         Transición → PLANNING cuando llega un goal.
         """
-        self.get_logger().info(f"[WAITING STATE] new_goal_received: {self.new_goal_received}")
 
         if self.new_goal_received:
             self.new_goal_received = False
@@ -272,7 +301,7 @@ class RobotNavigator(Node):
             self.get_logger().warn('Faltan datos para planificar.')
             return
 
-        path = self._run_theta_star(self.current_pose, self.goal_pose, self.inflated_map)
+        path = self._run_theta_star(self.current_pose, self.goal_pose, self.inflated_map, self.map)
 
         if path:
             self.planned_path = path
@@ -292,6 +321,10 @@ class RobotNavigator(Node):
           → AVOIDING  si detecta obstáculo no mapeado en el camino
           → PLANNING  si llega un goal nuevo
         """
+        if self._current_path_msg:   # republicar el path en cada ciclo para que RViz lo vea
+            self._current_path_msg.header.stamp = self.get_clock().now().to_msg()
+            self.pub_path.publish(self._current_path_msg)
+
         # Prioridad 1: nuevo goal → re-planear
         if self.new_goal_received:
             self.new_goal_received = False
@@ -301,11 +334,17 @@ class RobotNavigator(Node):
             return
 
         # Prioridad 2: obstáculo detectado en el camino
-        if self._obstacle_detected_on_path():
-            self.get_logger().info('Obstáculo detectado. Pasando a AVOIDING.')
+        now = self.get_clock().now().nanoseconds / 1e9
+        if now >= self._avoid_cooldown_until and self._obstacle_detected_on_path():
+            self.get_logger().info('Obstáculo no mapeado detectado. Pasando a AVOIDING.')
             self._stop_robot()
             self.transition_to(State.AVOIDING)
             return
+        # if self._obstacle_detected_on_path():
+        #     self.get_logger().info('Obstáculo detectado. Pasando a AVOIDING.')
+        #     self._stop_robot()
+        #     self.transition_to(State.AVOIDING)
+        #     return
 
         # Prioridad 3: llegó al goal (posición)
         if self._reached_goal_position():
@@ -318,18 +357,41 @@ class RobotNavigator(Node):
         cmd = self._compute_pure_pursuit_cmd()
         self.pub_cmd_vel.publish(cmd)
 
+    # def run_avoiding(self):
+    #     """
+    #     Esquiva un obstáculo no mapeado.
+    #     Luego verifica si el próximo waypoint del path original sigue siendo
+    #     alcanzable (line-of-sight libre).
+    #     Transición → PLANNING.
+    #     """
+    #     avoidance_done = self._execute_avoidance_maneuver()
+
+    #     if avoidance_done:
+    #             self.get_logger().info('Re-planeando. Pasando a PLANNING.')
+    #             self.transition_to(State.PLANNING)
+
     def run_avoiding(self):
-        """
-        Esquiva un obstáculo no mapeado.
-        Luego verifica si el próximo waypoint del path original sigue siendo
-        alcanzable (line-of-sight libre).
-        Transición → PLANNING.
-        """
         avoidance_done = self._execute_avoidance_maneuver()
 
         if avoidance_done:
-                self.get_logger().info('Re-planeando. Pasando a PLANNING.')
-                self.transition_to(State.PLANNING)
+            # Detener el robot y esperar que el PF reconverja
+            self._stop_robot()
+
+            # Si la nube está dispersa, quedarse quieto y esperar
+            if (self.belief_spread_xy is not None and
+                    self.belief_spread_xy > self.CONV_XY_THRESHOLD * 3):
+                self.get_logger().info(
+                    f'Post-AVOIDING: esperando reconvergencia PF '
+                    f'(spread_xy={self.belief_spread_xy:.3f})',
+                    throttle_duration_sec=0.5
+                )
+                return  # Quedarse en AVOIDING parado, sin transicionar
+
+            # PF suficientemente concentrado: replanear
+            now = self.get_clock().now().nanoseconds / 1e9
+            self._avoid_cooldown_until = now + 1.0
+            self.get_logger().info('Evasión completa + PF reconvergido. Re-planeando.')
+            self.transition_to(State.PLANNING)
 
     def run_aligning(self):
         """
@@ -352,21 +414,21 @@ class RobotNavigator(Node):
                 self.get_logger().info('Alineación completa. Pasando a WAITING.')
                 self.transition_to(State.WAITING)
 
-    def run_relocalizing(self):
-        """Gira despacio en el lugar para alimentar al filtro con scans
-        nuevos hasta que la nube vuelva a concentrarse.
-        Al converger vuelve al estado guardado antes de la interrupción."""
-        if self._check_localization_converged("relocalizing"):
-            self._stop_robot()
-            saved = getattr(self, '_saved_state', State.PLANNING)
-            self.get_logger().info(f'Re-localizado. Retomando {saved.name}.')
-            self.transition_to(saved)
-            return
+    # def run_relocalizing(self): # ***
+    #     """Gira despacio en el lugar para alimentar al filtro con scans
+    #     nuevos hasta que la nube vuelva a concentrarse."""
+    #     self.get_logger().info('EN RELOCALIZING')
+    #     if self._check_localization_converged("relocalizing"):
+    #         self._stop_robot()
+    #         self.get_logger().info('Re-localizado. Retomo PLANNING.')
+    #         # replanear desde la pose actual: el path viejo ya no sirve
+    #         self.transition_to(State.PLANNING)
+    #         return
 
-        cmd = Twist()
-        cmd.linear.x = 0.0
-        cmd.angular.z = 0.3   # giro suave para acumular información del scan
-        self.pub_cmd_vel.publish(cmd)
+    #     cmd = Twist()
+    #     cmd.linear.x = 0.0
+    #     cmd.angular.z = 0.3   # giro suave para acumular información del scan
+    #     self.pub_cmd_vel.publish(cmd)
 
     # Para las transiciones -----------------------------------------------------------------------
 
@@ -456,7 +518,7 @@ class RobotNavigator(Node):
                 c   += sc
 
     def _run_theta_star(self, start: PoseStamped, goal: PoseStamped,
-                        grid: OccupancyGrid) -> list:
+                        inflated_grid: OccupancyGrid, grid: OccupancyGrid) -> list:
         """
         Planifica un camino libre de colisiones entre start y goal usando Theta*.
 
@@ -509,7 +571,7 @@ class RobotNavigator(Node):
             ( 1, -1, math.sqrt(2)), ( 1,  1, math.sqrt(2)),
         ]
 
-        height = grid.info.height
+        height = inflated_grid.info.height
 
         # 4) Loop principal ---
         while open_set:
@@ -537,12 +599,12 @@ class RobotNavigator(Node):
                 if neighbor in closed_set:
                     continue
                 # Saltar si está ocupado o es desconocido
-                cell_val = grid.data[nr * width + nc]
+                cell_val = inflated_grid.data[nr * width + nc]
                 if cell_val >= 50 or cell_val == -1:
                     continue
 
                 # --- Theta*: intentar conectar desde el ABUELO (parent of current) ---
-                if self._line_of_sight(grid, pr, pc, nr, nc):
+                if self._line_of_sight(inflated_grid, pr, pc, nr, nc):
                     # Costo desde el abuelo al vecino directamente
                     g_via_grandparent = (g_score[(pr, pc)]
                                          + math.hypot(nr - pr, nc - pc))
@@ -576,7 +638,7 @@ class RobotNavigator(Node):
         # --- 6. Convertir celdas a PoseStamped ---
         waypoints = []
         for (row, col) in path_cells:
-            wx, wy = self._grid_to_world(row, col, grid)
+            wx, wy = self._grid_to_world(row, col, inflated_grid)
             waypoints.append(self._make_pose_stamped(wx, wy))
 
         self.get_logger().info(
@@ -636,11 +698,54 @@ class RobotNavigator(Node):
         path_msg.header.frame_id = 'map'
         path_msg.header.stamp = self.get_clock().now().to_msg()
         path_msg.poses = waypoints
+        self._current_path_msg = path_msg
         self.pub_path.publish(path_msg)
 
+    # def _obstacle_detected_on_path(self) -> bool:
+    #     """Retorna True si cb_scan detectó algo en el cono frontal."""
+    #     return self.obstacle_ahead
     def _obstacle_detected_on_path(self) -> bool:
-        """Retorna True si cb_scan detectó algo en el cono frontal."""
-        return self.obstacle_ahead
+        """Solo True si hay un obstáculo NO mapeado en el cono frontal."""
+        return self.obstacle_ahead and self._obstacle_is_unmapped()
+
+    def _obstacle_is_unmapped(self) -> bool:
+        """
+        Proyecta cada hit del cono frontal al mapa inflado.
+        Retorna True solo si alguno cae en una celda LIBRE del mapa
+        (obstáculo dinámico real), no en una celda ya ocupada (pared conocida).
+        """
+        if self.last_scan is None or self.inflated_map is None or self.current_pose is None:
+            return False
+
+        msg = self.last_scan
+        rx = self.current_pose.pose.position.x
+        ry = self.current_pose.pose.position.y
+        robot_yaw = self.current_yaw
+        info = self.inflated_map.info
+
+        angle = msg.angle_min
+        for r in msg.ranges:
+            angle_norm = math.atan2(math.sin(angle), math.cos(angle))
+            if abs(angle_norm) <= self.CONE_HALF_ANGLE:
+                if (r > msg.range_min and r < msg.range_max
+                        and math.isfinite(r)
+                        and r < self.OBSTACLE_DISTANCE_THRESHOLD):
+                    # Proyectar el hit al frame map
+                    global_angle = robot_yaw + angle_norm
+                    hit_x = rx + r * math.cos(global_angle)
+                    hit_y = ry + r * math.sin(global_angle)
+
+                    col = int((hit_x - info.origin.position.x) / info.resolution)
+                    row = int((hit_y - info.origin.position.y) / info.resolution)
+
+                    if 0 <= row < info.height and 0 <= col < info.width:
+                        cell_val = self.inflated_map.data[row * info.width + col]
+                        if cell_val < 50:
+                            # Celda libre en el mapa → obstáculo no esperado
+                            return True
+                        # cell_val >= 50 → pared ya mapeada, ignorar
+            angle += msg.angle_increment
+        return False
 
     def _reached_goal_position(self) -> bool:
         """
@@ -724,6 +829,20 @@ class RobotNavigator(Node):
         cmd = Twist()
         cmd.linear.x  = v
         cmd.angular.z = omega
+
+        m = Marker()
+        m.header.frame_id = 'map'
+        m.header.stamp = self.get_clock().now().to_msg()
+        m.ns = 'pp'
+        m.type = Marker.SPHERE
+        m.action = Marker.ADD
+        m.pose.position.x = target_wp.pose.position.x
+        m.pose.position.y = target_wp.pose.position.y
+        m.pose.position.z = 0.1
+        m.scale.x = m.scale.y = m.scale.z = 0.15
+        m.color.r = 0.0; m.color.g = 1.0; m.color.b = 0.0; m.color.a = 1.0
+        self.pub_lookahead.publish(m)
+
         return cmd
 
     def _execute_avoidance_maneuver(self) -> bool:
@@ -736,7 +855,7 @@ class RobotNavigator(Node):
             self._avoid_yaw_start = self._get_yaw_from_pose(self.current_pose)
             self._avoid_turn_sign = self._pick_clearer_side()
             lado = 'izquierda' if self._avoid_turn_sign > 0 else 'derecha'
-            self.get_logger().info(f'Obstáculo: girando 110° hacia la {lado}.')
+            self.get_logger().info(f'Obstáculo: girando {self.AVOID_ROTATION_ANGLE}° hacia la {lado}.')
 
         # ¿Cuánto giré desde el inicio de la maniobra?
         yaw_now = self._get_yaw_from_pose(self.current_pose)
@@ -825,7 +944,7 @@ class RobotNavigator(Node):
         for r in msg.ranges:
             angle_norm = math.atan2(math.sin(angle), math.cos(angle))
             if abs(angle_norm) <= self.AVOID_EVAL_HALF_ANGLE:
-                if (r > msg.range_min and r < msg.range_max and math.isfinite(r)):
+                if r > msg.range_min and r < msg.range_max and math.isfinite(r):
                     if angle_norm > 0:
                         min_left = min(min_left, r)
                     elif angle_norm < 0:

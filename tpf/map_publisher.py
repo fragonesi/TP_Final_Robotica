@@ -29,8 +29,6 @@ class MapPublisher(Node):
         img = Image.open(image_path)
         img = np.array(img)
         img = np.flipud(img)
-        # img = np.fliplr(img)
-        # img = np.rot90(img, k=2)
         self.map_msg = OccupancyGrid()
         self.map_msg.header.frame_id = "map"
         self.map_msg.info.resolution = map_config['resolution']
@@ -65,7 +63,7 @@ class MapPublisher(Node):
         #     self.publish_map
         # )
         
-        self.timer = self.create_timer(0.5, self.publish_map_once)
+        self.timer = self.create_timer(0.2, self.publish_map_once)
         # self.publish_map()
         self.get_logger().info("Map publisher listo")
 

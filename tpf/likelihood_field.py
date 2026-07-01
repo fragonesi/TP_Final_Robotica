@@ -27,10 +27,10 @@ class LikelihoodMapPublisher(Node):
         
         grid = np.array(msg.data, dtype=np.int8).reshape((height, width))
 
-        occupied = (grid == 100)
-        distances = distance_transform_edt(~occupied) * msg.info.resolution
+        free = (grid == 0)
+        distances = distance_transform_edt(free) * msg.info.resolution #calculo la distancia a la celda ocupada mas cercana para cada celda libre
 
-        sigma = 0.3
+        sigma = 0.35
         likelihood = np.exp(-distances**2 / (2 * sigma**2))
 
         prob_msg.data = (likelihood*100).astype(np.int8).flatten().tolist()
