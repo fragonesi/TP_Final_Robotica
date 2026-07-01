@@ -1,6 +1,6 @@
 """Lanza el nodo de GraphSLAM desde los CSV y abre RViz con la config de la Parte A.
 
-    ros2 launch TP_Final_Robotica slam.launch.py odom_csv:=/ruta/odom_deltas.csv \
+    ros2 launch slam_pkg slam.launch.py odom_csv:=/ruta/odom_deltas.csv \
         aruco_csv:=/ruta/laberinto_detections.csv
 """
 import os
@@ -17,7 +17,7 @@ def generate_launch_description():
     aruco = LaunchConfiguration('aruco_csv')
     noise_model = LaunchConfiguration('noise_model_path')
     rviz_cfg = os.path.join(
-        get_package_share_directory('TP_Final_Robotica'), 'rviz', 'slam.rviz')
+        get_package_share_directory('slam_pkg'), 'rviz', 'slam.rviz')
 
     # Default: noise_model.json instalado junto con aruco_pkg (share/aruco_pkg/).
     _nm_default = os.path.join(
@@ -32,7 +32,7 @@ def generate_launch_description():
                               description='JSON de modelo de ruido ArUco (fit_noise_model.py); '
                                           'vacío = usar covarianza por defecto'),
         Node(
-            package='TP_Final_Robotica',
+            package='slam_pkg',
             executable='graph_slam_node',
             name='graph_slam_node',
             output='screen',

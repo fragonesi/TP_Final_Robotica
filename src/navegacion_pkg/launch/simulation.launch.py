@@ -9,7 +9,7 @@ import os
 def generate_launch_description():
 
     rviz_config = os.path.join(
-        get_package_share_directory('tpf'),
+        get_package_share_directory('navegacion_pkg'),
         'rviz',
         'tp_final.rviz'
     )
@@ -31,14 +31,14 @@ def generate_launch_description():
     )
 
     likelihood_node = Node(
-        package='tpf',
+        package='navegacion_pkg',
         executable='likelihood_field_node',
         name='likelihood_map_publisher',
         output='screen'
     )
 
     localization_node = Node(
-        package='tpf',
+        package='navegacion_pkg',
         executable='localization_node',
         name='localization_node',
         output='screen'
@@ -48,7 +48,7 @@ def generate_launch_description():
     map_publisher_node = TimerAction(
         period=5.0,
         actions=[Node(
-            package='tpf',
+            package='navegacion_pkg',
             executable='map_publisher',
             name='map_publisher',
             output='screen'
@@ -56,7 +56,7 @@ def generate_launch_description():
     )
 
     robot_node = Node(
-        package='tpf',
+        package='navegacion_pkg',
         executable='robot_node',
         name='robot_navigator',
         output='screen'

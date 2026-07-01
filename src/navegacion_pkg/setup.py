@@ -1,6 +1,6 @@
 from setuptools import find_packages, setup
 
-package_name = 'tpf'
+package_name = 'navegacion_pkg'
 
 setup(
     name=package_name,
@@ -28,10 +28,10 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'robot_node = tpf.robot:main',
-            'localization_node = tpf.localization_node:main', 
-            'likelihood_field_node = tpf.likelihood_field:main',
-            'map_publisher = tpf.map_publisher:main',
+            'robot_node = navegacion_pkg.robot:main',
+            'localization_node = navegacion_pkg.localization_node:main',
+            'likelihood_field_node = navegacion_pkg.likelihood_field:main',
+            'map_publisher = navegacion_pkg.map_publisher:main',
         ],
     },
 )

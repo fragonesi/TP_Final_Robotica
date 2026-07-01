@@ -1,6 +1,6 @@
 """Guarda a CSV los barridos LIDAR de Gazebo, para la 2da pasada de Sistema 3.
 
-Port casi literal de TP_Final_Robotica/scan_logger_node.py (grilla de
+Port casi literal de slam_pkg/scan_logger_node.py (grilla de
 ocupacion): mismo formato de CSV, pero suscripto a `/scan` con QoS por
 defecto (RELIABLE) en vez de BEST_EFFORT -- ese override es especifico de
 como el bag real de Parte A publica sus tópicos; el LIDAR simulado del
