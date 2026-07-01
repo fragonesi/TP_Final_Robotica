@@ -1,6 +1,0 @@
-[console_scripts]
-likelihood_field_node = tpf.likelihood_field:main
-localization_node = tpf.localization_node:main
-map_publisher = tpf.map_publisher:main
-robot_node = tpf.robot:main
-
