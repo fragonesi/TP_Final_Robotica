@@ -3,7 +3,7 @@ from glob import glob
 
 from setuptools import find_packages, setup
 
-package_name = 'TP_Final_Robotica'
+package_name = 'slam_pkg'
 
 setup(
     name=package_name,
@@ -29,8 +29,8 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'graph_slam_node = TP_Final_Robotica.graph_slam_node:main',
-            'scan_logger_node = TP_Final_Robotica.scan_logger_node:main',
+            'graph_slam_node = slam_pkg.graph_slam_node:main',
+            'scan_logger_node = slam_pkg.scan_logger_node:main',
         ],
     },
 )

@@ -36,7 +36,7 @@ def generate_launch_description():
         ),
         # LIDAR → CSV para la 2da pasada (grilla de ocupación).
         Node(
-            package='TP_Final_Robotica',
+            package='slam_pkg',
             executable='scan_logger_node',
             name='scan_logger_node',
             output='screen',
