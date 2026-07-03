@@ -44,14 +44,18 @@ def generate_launch_description():
         output='screen'
     )
 
-    # map_publisher va último con delay para que todos los subscribers estén listos
+    # map_publisher va último con delay para que todos los subscribers estén listos.
+    # map_sim.yaml: mapa a escala de casa.world (~13x11 m) -- NO el mapa real de
+    # la Parte A (~33x33 m), que solo tiene sentido para robot_real.launch.py
+    # contra el TurtleBot4 físico en el laberinto real.
     map_publisher_node = TimerAction(
         period=5.0,
         actions=[Node(
             package='navegacion_pkg',
             executable='map_publisher',
             name='map_publisher',
-            output='screen'
+            output='screen',
+            parameters=[{'map_yaml': 'map_sim.yaml'}],
         )]
     )
 

@@ -16,8 +16,10 @@ class MapPublisher(Node):
     def __init__(self):
 
         super().__init__('map_publisher')
+        self.declare_parameter('map_yaml', 'map.yaml')
+        map_filename = self.get_parameter('map_yaml').get_parameter_value().string_value
         pkg_share = get_package_share_directory('navegacion_pkg')
-        map_yaml = os.path.join(pkg_share, 'map.yaml')
+        map_yaml = os.path.join(pkg_share, map_filename)
 
         with open(map_yaml, 'r') as f:
             map_config = yaml.safe_load(f)
