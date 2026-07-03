@@ -82,6 +82,14 @@ class RobotNavigator(Node):
         self.ANGLE_TOLERANCE    = math.radians(12.0)  # ±5° para considerar alineado
         self.ANGULAR_SPEED      = 0.3   # rad/s — velocidad de giro en ALIGNING
 
+        # --- Watchdog de progreso en WALKING ---
+        # Si el robot queda trabado (choque, patinaje) sin acercarse al goal,
+        # replanifica en vez de caminar indefinidamente sin avanzar.
+        self.WALKING_STUCK_TIMEOUT = 8.0  # segundos sin progreso antes de replanificar
+        self.WALKING_PROGRESS_EPSILON = 0.05  # metros — mejora mínima para contar como progreso
+        self._walking_last_progress_time = None
+        self._walking_last_progress_dist = None
+
         # --- Localización ---
         # nube del /belief: 2 métricas (spread_xy, spread_theta)
         self.CONV_XY_THRESHOLD = 0.25 # m²  (~0.5 m de desvío combinado)
@@ -311,10 +319,41 @@ class RobotNavigator(Node):
             self.current_waypoint_idx = 0
             self.get_logger().info(f'Camino encontrado ({len(path)} waypoints). Pasando a WALKING.')
             self._publish_path(path)
+            self._walking_last_progress_time = self.get_clock().now()
+            self._walking_last_progress_dist = None
             self.transition_to(State.WALKING)
         else:
             self.get_logger().warn('No se encontró camino. Volviendo a WAITING.')
             self.transition_to(State.WAITING)
+
+    def _walking_stuck(self) -> bool:
+        """
+        True si el robot lleva más de WALKING_STUCK_TIMEOUT segundos sin
+        acercarse al goal (progreso = caída en la distancia al goal).
+
+        Guarda el mejor progreso visto hasta ahora, así que ruido u
+        oscilaciones chicas de Pure Pursuit no disparan un falso positivo.
+        """
+        if self.current_pose is None or self.goal_pose is None:
+            return False
+
+        dx = self.goal_pose.pose.position.x - self.current_pose.pose.position.x
+        dy = self.goal_pose.pose.position.y - self.current_pose.pose.position.y
+        dist_to_goal = math.hypot(dx, dy)
+
+        if (self._walking_last_progress_dist is None
+                or dist_to_goal < self._walking_last_progress_dist - self.WALKING_PROGRESS_EPSILON):
+            self._walking_last_progress_dist = dist_to_goal
+            self._walking_last_progress_time = self.get_clock().now()
+            return False
+
+        stuck_secs = (self.get_clock().now() - self._walking_last_progress_time).nanoseconds / 1e9
+        if stuck_secs > self.WALKING_STUCK_TIMEOUT:
+            self.get_logger().warn(
+                f'WALKING sin progreso hace {stuck_secs:.1f}s '
+                f'(dist_goal={dist_to_goal:.2f}m). Replanificando.')
+            return True
+        return False
 
     def run_walking(self):
         """
@@ -354,6 +393,12 @@ class RobotNavigator(Node):
             self.get_logger().info('Posición del goal alcanzada. Pasando a ALIGNING.')
             self._stop_robot()
             self.transition_to(State.ALIGNING)
+            return
+
+        # Prioridad 4: sin progreso hacia el goal hace demasiado tiempo → replanificar
+        if self._walking_stuck():
+            self._stop_robot()
+            self.transition_to(State.PLANNING)
             return
 
         # Acción normal: avanzar al siguiente waypoint con Pure Pursuit
@@ -456,7 +501,7 @@ class RobotNavigator(Node):
         """
         if self.belief_spread_xy is None or self.belief_spread_theta is None:
             #self.get_logger().info('1')
-            return True
+            return False
 
         # Si ya estaba convergido, mantenerlo (la degradación se evalúa aparte).
         if self.localization_converged:
