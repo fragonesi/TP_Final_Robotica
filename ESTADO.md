@@ -124,7 +124,8 @@ Todo está en `src/TP_Final_Robotica/TP_Final_Robotica/` y commiteado en la bran
   docstrings; cubrimos el mismo caso de uso con `robot_real.launch.py` (abajo)
   y la adaptación real al TB4 ya vive en `src/parte_C/`.
 - [x] **Parte B — fixes de PruebaB integrados** *(03/07)*: del zip `PruebaB.zip`
-  (compañera) se integraron a `src/navegacion_pkg`: (1) `localization_node`
+  (**de Zoe** — el mensaje del commit `bf02c20` dice "de Roma" por error, era
+  el maintainer del setup.py) se integraron a `src/navegacion_pkg`: (1) `localization_node`
   ahora publica la **TF `map→odom`** con la media ponderada de las partículas
   (misma idea que `parte_C/localization_node_tb4.py`); (2) `map_publisher`
   vuelve a publicar **periódico a 1 Hz**; (3) **`launch/robot_real.launch.py`**
