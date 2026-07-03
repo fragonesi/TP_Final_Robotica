@@ -1,6 +1,6 @@
 from setuptools import find_packages, setup
 
-package_name = 'tpf'
+package_name = 'despliegue_pkg'
 
 setup(
     name=package_name,
@@ -29,12 +29,12 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'robot_node = tpf.robot:main',
-            'robot_node_c = tpf.robot_parte_c:main',
-            'localization_node = tpf.localization_node:main',
-            'localization_node_tb4 = tpf.localization_node_tb4:main',
-            'likelihood_field_node = tpf.likelihood_field:main',
-            'map_publisher = tpf.map_publisher:main',
+            'robot_node = despliegue_pkg.robot:main',
+            'robot_node_c = despliegue_pkg.robot_parte_c:main',
+            'localization_node = despliegue_pkg.localization_node:main',
+            'localization_node_tb4 = despliegue_pkg.localization_node_tb4:main',
+            'likelihood_field_node = despliegue_pkg.likelihood_field:main',
+            'map_publisher = despliegue_pkg.map_publisher:main',
         ],
     },
 )

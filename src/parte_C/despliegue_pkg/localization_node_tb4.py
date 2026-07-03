@@ -176,19 +176,6 @@ class LocalizationNodeTB4(Node):
         msg.pose.position.y = float(by)
         msg.pose.orientation = yaw_to_quaternion(float(btheta))
         self.best_particle_pub.publish(msg)
-        
-        def _publish_best_particle(self):
-        if self.pf.best_particle is None:
-            return
-        bx, by, btheta = self.pf.best_particle
-        msg = PoseStamped()
-        msg.header.frame_id = 'map'
-        msg.header.stamp = self.get_clock().now().to_msg()
-        msg.pose.position.x = float(bx)
-        msg.pose.position.y = float(by)
-        msg.pose.orientation = yaw_to_quaternion(float(btheta))
-        self.best_particle_pub.publish(msg)
-
 
     def _broadcast_map_to_odom(self):
         """Publica TF map → odom usando la pose estimada del filtro."""

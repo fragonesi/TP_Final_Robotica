@@ -25,26 +25,26 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
 
-    pkg = get_package_share_directory('tpf')
+    pkg = get_package_share_directory('despliegue_pkg')
 
     rviz_config = os.path.join(pkg, 'rviz', 'tp_final.rviz')
 
     likelihood_node = Node(
-        package='tpf',
+        package='despliegue_pkg',
         executable='likelihood_field_node',
         name='likelihood_map_publisher',
         output='screen',
     )
 
     localization_node = Node(
-        package='tpf',
+        package='despliegue_pkg',
         executable='localization_node_tb4',
         name='localization_node',
         output='screen',
     )
 
     robot_node_c = Node(
-        package='tpf',
+        package='despliegue_pkg',
         executable='robot_node_c',
         name='robot_navigator_c',
         output='screen',
@@ -59,7 +59,7 @@ def generate_launch_description():
     )
 
     map_publisher_node = Node(
-        package='tpf',
+        package='despliegue_pkg',
         executable='map_publisher',
         name='map_publisher',
         output='screen',

@@ -36,7 +36,7 @@ TP_Final_Robotica_ParteC_v2/
 ├── launch/
 │   ├── robot_real.launch.py       ← launch para robot real (NUEVO Parte C)
 │   └── simulation.launch.py       ← launch original Parte B (Gazebo TB3)
-├── tpf/
+├── despliegue_pkg/                 ← (antes `tpf`, renombrado para consistencia con aruco_pkg/slam_pkg/navegacion_pkg)
 │   ├── robot_parte_c.py           ← FSM extendida (NUEVO Parte C)
 │   ├── localization_node_tb4.py   ← localización adaptada TB4 (NUEVO Parte C)
 │   ├── robot.py                   ← FSM base (Parte B, no modificado)
@@ -54,7 +54,7 @@ TP_Final_Robotica_ParteC_v2/
 
 - ROS 2 Humble
 - Python 3 con: `numpy`, `scipy`, `opencv-python`, `cv_bridge`, `Pillow`
-- Los dos paquetes buildeados: `tpf` y `cono_detector_pkg`
+- Los dos paquetes buildeados: `despliegue_pkg` y `cono_detector_pkg`
 
 ---
 
@@ -62,7 +62,7 @@ TP_Final_Robotica_ParteC_v2/
 
 ```bash
 cd ~/turtlebot3_ws
-colcon build --packages-select tpf cono_detector_pkg --symlink-install
+colcon build --packages-select despliegue_pkg cono_detector_pkg --symlink-install
 source install/setup.bash
 ```
 
@@ -84,7 +84,7 @@ source ~/turtlebot3_ws/install/setup.bash
 ```bash
 cd ~/turtlebot3_ws
 source install/setup.bash
-ros2 launch tpf robot_real.launch.py
+ros2 launch despliegue_pkg robot_real.launch.py
 ```
 
 Esperá a ver estos mensajes antes de continuar:
@@ -173,7 +173,7 @@ El robot no sabe dónde está en el mapa hasta que vos se lo decís.
 
 ## Parámetros ajustables
 
-Todos en `tpf/robot_parte_c.py`, en el `__init__` de `RobotNavigatorC`:
+Todos en `despliegue_pkg/robot_parte_c.py`, en el `__init__` de `RobotNavigatorC`:
 
 | Parámetro | Valor actual | Descripción |
 |---|---|---|
@@ -221,4 +221,9 @@ El mapa (`map.pgm` / `map.yaml`) fue generado en **Parte A** mediante:
 3. Optimización del grafo con **Graph SLAM** (cierre de lazo por re-observación de ArUcos)
 4. Segunda pasada: proyección del LIDAR sobre la trayectoria corregida → grilla de ocupación log-odds
 
-Origen del mapa en coordenadas del mundo: `(-20.008, -15.316)` m.
+Es el mapa de la **corrida larga (46,8 min)**, el mismo que usa `navegacion_pkg` y
+`entrega_parte_A/` (estandarizado el 03/07). El `map.pgm`/`map.yaml` que traía este
+paquete al rescatarlo de `PRA_TpFinal` (02/07) era de una corrida anterior y quedó
+desactualizado; se reemplazó el 03/07 por el de la entrega final.
+
+Origen del mapa en coordenadas del mundo: `(-14.447, -21.394)` m.
