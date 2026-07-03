@@ -104,11 +104,21 @@ Todo está en `src/TP_Final_Robotica/TP_Final_Robotica/` y commiteado en la bran
 - [ ] **Nitidez final (opcional, agregado grande)**: para el salto final de paredes
   finas haría falta meter edges de **scan-matching dentro del GraphSLAM** (no solo en la
   2da pasada de la grilla).
-- [ ] **Cierre de entrega**: empaquetar el mapa final + `landmarks.json` y la integración
-  con la Parte B. (Launch files y config `.rviz` ya están en el repo.)
-- [ ] **Commitear**: los cambios de `occupancy_grid.py`/`slam_pipeline.py`, este ESTADO,
-  el README y todo lo rescatado de PRA (`entrega_parte_A/`, `src/parte_C/`, docs)
-  siguen sin commitear.
+- [ ] **Cierre de entrega**: la integración con la Parte B. (El mapa final +
+  `landmarks.json` ya están empaquetados en `entrega_parte_A/`; launch files y
+  config `.rviz` ya están en el repo.)
+- [x] **Commitear** *(hecho 03/07)*: el fix de la silla, la Parte C, los docs y
+  `entrega_parte_A/` (ahora con el mapa de la **corrida larga de 46,8 min**,
+  el de `Rosbags/corrida2_run/slam_out_v2/`) están commiteados y pusheados en
+  `fix-relocalizing-completo`.
+- [ ] **Reconciliar con `join_parts`**: el 02/07 apareció en el remoto la branch
+  `join_parts` (de fragonesi), creada desde el `main` viejo con el layout PRA
+  (`PRA_A/B/C` + `mapa_completo/` con varias corridas de salida). Trae cambios
+  propios en `graph_slam.py` (odom yaw std 1°→3°), `occupancy_grid.py`
+  (`p_occ/p_free` 0.85/0.35, PNGs de progreso, recorte `max_scan_idx`) y
+  `slam_pipeline.py` — tocan las mismas funciones que el fix de la silla, así
+  que el merge con esta branch va a necesitar reconciliación manual (y decidir
+  qué layout queda: el workspace colcon de acá o el PRA de allá).
 
 ## ⚠️ Importante: el bag del laberinto NO está incluido
 
