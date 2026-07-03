@@ -126,6 +126,8 @@ class RobotNavigator(Node):
         self.pub_path = self.create_publisher(Path, '/planned_path', qos_latched)
         # self.pub_path    = self.create_publisher(Path, '/planned_path', 1)
         self.pub_lookahead = self.create_publisher(Marker, '/lookahead_point', 10)
+        self.pub_planning_map = self.create_publisher(
+            OccupancyGrid, '/planning_map', qos_latched)
 
         # Timer para la máquina de estados ---------
         self.timer = self.create_timer(0.1, self.state_machine_loop)  # 10 Hz
@@ -304,7 +306,8 @@ class RobotNavigator(Node):
 
     def run_planning(self):
         """
-        Planifica el camino con Theta* sobre el mapa inflado.
+        Planifica el camino con Theta* sobre el mapa inflado + los obstáculos
+        dinámicos que ve el LIDAR en este instante (ver _build_planning_map).
         Transición → WALKING si encuentra camino.
         Transición → WAITING si no encuentra camino.
         """
@@ -312,7 +315,15 @@ class RobotNavigator(Node):
             self.get_logger().warn('Faltan datos para planificar.')
             return
 
-        path = self._run_theta_star(self.current_pose, self.goal_pose, self.inflated_map, self.map)
+        planning_map = self._build_planning_map()
+
+        # Publicarlo para verlo en RViz (refrescamos el timestamp).
+        planning_map.header.stamp = self.get_clock().now().to_msg()
+        if not planning_map.header.frame_id:
+            planning_map.header.frame_id = 'map'
+        self.pub_planning_map.publish(planning_map)
+
+        path = self._run_theta_star(self.current_pose, self.goal_pose, planning_map, self.map)
 
         if path:
             self.planned_path = path
@@ -521,6 +532,75 @@ class RobotNavigator(Node):
 
         return False
 
+    def _build_planning_map(self) -> OccupancyGrid:
+        """
+        Devuelve una copia del mapa estático inflado con los obstáculos
+        dinámicos (detectados por el láser y no presentes en el mapa)
+        proyectados y también inflados.
+
+        No tiene memoria: se reconstruye desde cero en cada replaneo, así
+        que un obstáculo que se movió deja de bloquear en el próximo plan.
+        """
+        # Partimos siempre del mapa estático inflado (nunca se muta).
+        planning = copy.deepcopy(self.inflated_map)
+
+        if self.last_scan is None or self.current_pose is None:
+            return planning
+
+        info = planning.info
+        width, height = info.width, info.height
+        data = np.array(planning.data, dtype=np.int8).reshape((height, width))
+
+        # Pose del robot en el mundo
+        rx = self.current_pose.pose.position.x
+        ry = self.current_pose.pose.position.y
+        ryaw = self._get_yaw_from_pose(self.current_pose)
+
+        scan = self.last_scan
+        angle = scan.angle_min
+
+        # Celdas nuevas que vamos a bloquear (para inflarlas juntas después)
+        dynamic_cells = np.zeros((height, width), dtype=bool)
+
+        for rng in scan.ranges:
+            a = angle
+            angle += scan.angle_increment
+
+            # Descartar lecturas inválidas o fuera de rango útil
+            if not math.isfinite(rng):
+                continue
+            if rng < scan.range_min or rng > scan.range_max:
+                continue
+            # Solo nos importan obstáculos razonablemente cerca.
+            if rng > 3.0:
+                continue
+
+            # Punto de impacto en marco del robot -> marco mundo
+            wx = rx + rng * math.cos(ryaw + a)
+            wy = ry + rng * math.sin(ryaw + a)
+
+            cell = self._world_to_grid(wx, wy, planning)
+            if cell is None:
+                continue
+            row, col = cell
+            dynamic_cells[row, col] = True
+
+        # Inflar los obstáculos dinámicos con el mismo radio que el mapa estático
+        r = self.INFLATION_RADIUS_CELLS
+        y_k, x_k = np.ogrid[-r:r+1, -r:r+1]
+        kernel = (x_k**2 + y_k**2) <= r**2
+        dilated = binary_dilation(dynamic_cells, structure=kernel)
+
+        # Marcar como ocupado sólo lo que hoy es libre (no tocar desconocido)
+        data[dilated & (data == 0)] = 100
+        planning.data = data.flatten().tolist()
+
+        self.get_logger().info(
+            f'Mapa de planificación: {int(dynamic_cells.sum())} celdas dinámicas '
+            f'proyectadas desde el scan (infladas r={r}).'
+        )
+        return planning
+
     def _line_of_sight(self, grid: OccupancyGrid,
                        r0: int, c0: int,
                        r1: int, c1: int) -> bool:
@@ -596,6 +676,56 @@ class RobotNavigator(Node):
         if grid.data[rg * width + cg] >= 50:
             self.get_logger().error('Theta*: celda de goal ocupada.')
             return []
+
+        # Si start/goal caen dentro del margen de seguridad (mapa inflado,
+        # no el mapa crudo de arriba), reubicar a la celda libre más cercana
+        # en vez de fallar directo -- común cuando el robot está pegado a
+        # una pared o el goal se pide muy cerca de un obstáculo.
+        iw = inflated_grid.info.width
+        ih = inflated_grid.info.height
+
+        def _inflated_free(r, c):
+            if not (0 <= r < ih and 0 <= c < iw):
+                return False
+            v = inflated_grid.data[r * iw + c]
+            return 0 <= v < 50
+
+        def _nearest_free(r, c, max_radius=40):
+            if _inflated_free(r, c):
+                return (r, c)
+            from collections import deque
+            seen = {(r, c)}
+            q = deque([(r, c, 0)])
+            while q:
+                cr, cc, d = q.popleft()
+                if d >= max_radius:
+                    continue
+                for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1),
+                               (-1, -1), (-1, 1), (1, -1), (1, 1)):
+                    nr, nc = cr + dr, cc + dc
+                    if (nr, nc) in seen:
+                        continue
+                    seen.add((nr, nc))
+                    if _inflated_free(nr, nc):
+                        return (nr, nc)
+                    if 0 <= nr < ih and 0 <= nc < iw:
+                        q.append((nr, nc, d + 1))
+            return None
+
+        if not _inflated_free(rs, cs):
+            free = _nearest_free(rs, cs)
+            if free is None:
+                self.get_logger().warn('Theta*: inicio encerrado en zona inflada, sin celda libre cerca.')
+                return []
+            self.get_logger().info(f'Theta*: inicio reubicado de ({rs},{cs}) a celda libre {free}.')
+            rs, cs = free
+        if not _inflated_free(rg, cg):
+            free = _nearest_free(rg, cg)
+            if free is None:
+                self.get_logger().warn('Theta*: goal encerrado en zona inflada, sin celda libre cerca.')
+                return []
+            self.get_logger().info(f'Theta*: goal reubicado de ({rg},{cg}) a celda libre {free}.')
+            rg, cg = free
 
         # 2) Heurística: distancia euclidiana.
         def h(r, c):
