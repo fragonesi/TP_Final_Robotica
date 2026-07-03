@@ -51,22 +51,31 @@ class RobotNavigator(Node):
         self.planned_path: list = [] # lista de waypoints
         self.current_waypoint_idx: int = 0
         self.new_goal_received: bool = False # se usa para goal nuevo durante WALKING
-        self._avoid_state = 'FRENAR'
-        self._avoid_yaw_start = None
-        self.AVOID_ROTATION_ANGLE = math.radians(110.0)
         self.current_yaw = 0.0
 
         # --- Detección de obstáculos ---
         self.last_scan: LaserScan | None = None
-        self.obstacle_ahead: bool = False # flag de si hay un obstaculo delante
+        self.obstacle_ahead: bool = False # flag crudo (sin debounce) de si hay un obstaculo delante
         self.OBSTACLE_DISTANCE_THRESHOLD = 0.15 # en metros
         self.CONE_HALF_ANGLE = math.radians(45) # ±45°: un cono delantero de un total de 90°
 
-        # --- Evasión reactiva de obstáculos ---
-        self.AVOID_ANGULAR_SPEED = 0.05 # rad/s — velocidad de giro al esquivar
+        # Debounce/histéresis: una lectura aislada no debe disparar ni cancelar
+        # una evasión (el sensor puede parpadear). Se confirma/descarta recién
+        # tras N lecturas consecutivas en el mismo sentido.
+        self.OBSTACLE_CONFIRM_SCANS = 3
+        self.OBSTACLE_CLEAR_SCANS = 3
+        self._obstacle_hit_streak = 0
+        self._obstacle_clear_streak = 0
+        self.obstacle_confirmed: bool = False
+
+        # Rayo más cercano dentro del cono frontal (robot-frame), para ubicar
+        # el obstáculo dinámico en el mapa al replanificar alrededor suyo.
+        self._closest_obstacle_range: float | None = None
+        self._closest_obstacle_bearing: float | None = None
+
+        # --- Evasión de obstáculos no mapeados ---
         self.AVOID_EVAL_HALF_ANGLE = math.radians(90)  # +-90°: sector que se mira para elegir lado
-        self.AVOID_CLEAR_MARGIN = 1.25  # el frente se da por libre si la dist. mínima supera OBSTACLE_DISTANCE_THRESHOLD x este margen
-        self._avoid_turn_sign = 0.0 # +1 izquierda / -1 derecha
+        self._avoiding_dynamic_obstacle: bool = False  # PLANNING debe usar mapa aumentado
 
         # --- Inflar el mapa ---
         self.inflated_map: OccupancyGrid | None = None
@@ -142,25 +151,27 @@ class RobotNavigator(Node):
     def cb_scan(self, msg: LaserScan):
         """
         Guarda el scan y evalúa si hay un obstáculo no mapeado en el cono frontal del robot (±45°, cono total de 90°).
- 
-        El LIDAR de TurtleBot3 publica ángulos en [angle_min, angle_max] con incremento angle_increment. 
+
+        El LIDAR de TurtleBot3 publica ángulos en [angle_min, angle_max] con incremento angle_increment.
         El ángulo 0 apunta hacia adelante del robot. Rangos inválidos vienen como 0.0 o inf — ambos se descartan.
+
+        Corre en todos los estados (no solo WALKING): PLANNING necesita la
+        lectura más fresca posible para re-chequear el obstáculo apenas
+        Theta* termina de calcular el camino alternativo (ver
+        _run_planning_around_obstacle).
         """
 
         # Guardo el mensaje que recibo como el último scan.
         self.last_scan = msg
- 
-        # Solo detecto cuando camino:
-        if self.state not in (State.WALKING,):
-            return
 
         angle = msg.angle_min # arranco en el mínimo ángulo
-        obstacle_found = False # flag
- 
+        closest_range = None
+        closest_bearing = None
+
         for r in msg.ranges:
             # Normalizo el ángulo al rango [-π, π]
             angle_norm = math.atan2(math.sin(angle), math.cos(angle))
- 
+
             # Me pregunto si está dentro del cono frontal de ±45°:
             if abs(angle_norm) <= self.CONE_HALF_ANGLE:
                 # Descarto lecturas inválidas (0.0, inf, nan)
@@ -168,12 +179,29 @@ class RobotNavigator(Node):
                         and r < msg.range_max
                         and math.isfinite(r)
                         and r < self.OBSTACLE_DISTANCE_THRESHOLD):
-                    obstacle_found = True
-                    break 
- 
+                    if closest_range is None or r < closest_range:
+                        closest_range = r
+                        closest_bearing = angle_norm
+
             angle += msg.angle_increment
- 
+
+        obstacle_found = closest_range is not None
         self.obstacle_ahead = obstacle_found
+        self._closest_obstacle_range = closest_range
+        self._closest_obstacle_bearing = closest_bearing
+
+        # Debounce: confirma/descarta el obstáculo tras N lecturas seguidas
+        # en el mismo sentido, para no oscilar por una detección aislada.
+        if obstacle_found:
+            self._obstacle_hit_streak += 1
+            self._obstacle_clear_streak = 0
+            if self._obstacle_hit_streak >= self.OBSTACLE_CONFIRM_SCANS:
+                self.obstacle_confirmed = True
+        else:
+            self._obstacle_clear_streak += 1
+            self._obstacle_hit_streak = 0
+            if self._obstacle_clear_streak >= self.OBSTACLE_CLEAR_SCANS:
+                self.obstacle_confirmed = False
 
     def cb_belief(self, msg: PoseArray):
         """
@@ -263,11 +291,17 @@ class RobotNavigator(Node):
     def run_planning(self):
         """
         Planifica el camino con Theta* sobre el mapa inflado.
+        Si se llegó acá desde AVOIDING (obstáculo dinámico), delega en
+        _run_planning_around_obstacle en vez del flujo normal.
         Transición → WALKING si encuentra camino.
         Transición → WAITING si no encuentra camino.
         """
         if self.inflated_map is None or self.current_pose is None or self.goal_pose is None:
             self.get_logger().warn('Faltan datos para planificar.')
+            return
+
+        if self._avoiding_dynamic_obstacle:
+            self._run_planning_around_obstacle()
             return
 
         path = self._run_theta_star(self.current_pose, self.goal_pose, self.inflated_map)
@@ -281,6 +315,60 @@ class RobotNavigator(Node):
         else:
             self.get_logger().warn('No se encontró camino. Volviendo a WAITING.')
             self.transition_to(State.WAITING)
+
+    def _run_planning_around_obstacle(self):
+        """
+        Segundo modo de PLANNING, disparado desde AVOIDING.
+
+        Marca el obstáculo dinámico sobre una copia del mapa inflado
+        (self.inflated_map no se toca — el mapa base queda intacto para la
+        próxima planificación) y corre Theta* sobre esa copia. Theta* es
+        síncrono, así que para cuando termina de calcular ya pasó tiempo
+        suficiente como para re-chequear el sensor (mismo debounce que
+        dispara AVOIDING) y decidir:
+          - Obstáculo sigue confirmado → adopta el camino nuevo (rodeo).
+          - Ya no está → descarta el camino nuevo y retoma el viejo tal cual
+            (mismo índice de waypoint), sin gastar otra vuelta de Theta*.
+
+        Al volver a WALKING resetea el debounce: si no, el obstáculo (que
+        sigue físicamente en el mismo lugar, el robot no se movió durante
+        PLANNING) seguiría "confirmado" en el primer tick y retriggerearía
+        AVOIDING de inmediato.
+        """
+        self._avoiding_dynamic_obstacle = False
+
+        obstacle_xy = self._get_obstacle_map_position()
+        if obstacle_xy is not None:
+            planning_grid = self._make_augmented_map(self.inflated_map, obstacle_xy)
+        else:
+            planning_grid = self.inflated_map
+
+        alt_path = self._run_theta_star(self.current_pose, self.goal_pose, planning_grid)
+
+        if self.obstacle_confirmed:
+            if alt_path:
+                self.planned_path = alt_path
+                self.current_waypoint_idx = 0
+                self._publish_path(alt_path)
+                self.get_logger().info(
+                    f'Obstáculo sigue ahí: camino nuevo ({len(alt_path)} waypoints) rodeándolo.')
+            else:
+                self.get_logger().warn(
+                    'Obstáculo sigue ahí y no se encontró camino alternativo. Volviendo a WAITING.')
+                self._reset_obstacle_debounce()
+                self.transition_to(State.WAITING)
+                return
+        else:
+            self.get_logger().info('Obstáculo ya no está. Retomando el camino anterior.')
+
+        self._reset_obstacle_debounce()
+        self.transition_to(State.WALKING)
+
+    def _reset_obstacle_debounce(self):
+        """Limpia el debounce de obstáculo al salir de PLANNING-por-evasión."""
+        self.obstacle_confirmed = False
+        self._obstacle_hit_streak = 0
+        self._obstacle_clear_streak = 0
 
     def run_walking(self):
         """
@@ -318,16 +406,15 @@ class RobotNavigator(Node):
 
     def run_avoiding(self):
         """
-        Esquiva un obstáculo no mapeado.
-        Luego verifica si el próximo waypoint del path original sigue siendo
-        alcanzable (line-of-sight libre).
+        Frena ante un obstáculo no mapeado. No gira a ciegas: delega en
+        PLANNING el cálculo de un camino alternativo con el obstáculo
+        marcado sobre una copia del mapa (ver _run_planning_around_obstacle).
         Transición → PLANNING.
         """
-        avoidance_done = self._execute_avoidance_maneuver()
-
-        if avoidance_done:
-                self.get_logger().info('Re-planeando. Pasando a PLANNING.')
-                self.transition_to(State.PLANNING)
+        self._stop_robot()
+        self._avoiding_dynamic_obstacle = True
+        self.get_logger().info('Obstáculo confirmado. Replanificando con mapa aumentado.')
+        self.transition_to(State.PLANNING)
 
     def run_aligning(self):
         """
@@ -389,7 +476,7 @@ class RobotNavigator(Node):
         """
         if self.belief_spread_xy is None or self.belief_spread_theta is None:
             #self.get_logger().info('1')
-            return True
+            return False
 
         # Si ya estaba convergido, mantenerlo (la degradación se evalúa aparte).
         if self.localization_converged:
@@ -637,8 +724,76 @@ class RobotNavigator(Node):
         self.pub_path.publish(path_msg)
 
     def _obstacle_detected_on_path(self) -> bool:
-        """Retorna True si cb_scan detectó algo en el cono frontal."""
-        return self.obstacle_ahead
+        """Retorna True si el sensor confirmó (con debounce) algo en el cono frontal."""
+        return self.obstacle_confirmed
+
+    def _get_obstacle_map_position(self) -> tuple[float, float] | None:
+        """
+        Convierte la lectura más cercana del cono frontal (robot-frame) al
+        frame 'map', usando la pose actual. None si no hay lectura válida.
+        """
+        if (self._closest_obstacle_range is None
+                or self._closest_obstacle_bearing is None
+                or self.current_pose is None):
+            return None
+
+        r = self._closest_obstacle_range
+        bearing = self._closest_obstacle_bearing
+
+        # robot-frame: x adelante, y izquierda (REP103)
+        ox = r * math.cos(bearing)
+        oy = r * math.sin(bearing)
+
+        robot_x = self.current_pose.pose.position.x
+        robot_y = self.current_pose.pose.position.y
+        yaw = self._get_yaw_from_pose(self.current_pose)
+
+        map_x = robot_x + ox * math.cos(yaw) - oy * math.sin(yaw)
+        map_y = robot_y + ox * math.sin(yaw) + oy * math.cos(yaw)
+        return (map_x, map_y)
+
+    def _make_augmented_map(self, grid: OccupancyGrid,
+                            obstacle_xy: tuple[float, float]) -> OccupancyGrid:
+        """
+        Copia temporal del mapa con el obstáculo dinámico marcado como
+        ocupado (mismo radio que INFLATION_RADIUS_CELLS, para que Theta* le
+        deje el mismo margen que a una pared). No modifica `grid`: el mapa
+        base (self.inflated_map) queda intacto para la próxima planificación.
+        """
+        cell = self._world_to_grid(obstacle_xy[0], obstacle_xy[1], grid)
+        if cell is None:
+            self.get_logger().warn('Obstáculo fuera del mapa, no se puede marcar.')
+            return grid
+
+        row, col = cell
+        width, height = grid.info.width, grid.info.height
+        r = self.INFLATION_RADIUS_CELLS
+
+        augmented = copy.deepcopy(grid)
+        raw = np.array(augmented.data, dtype=np.int8).reshape((height, width))
+
+        rows_idx, cols_idx = np.ogrid[:height, :width]
+        to_mark = ((rows_idx - row) ** 2 + (cols_idx - col) ** 2) <= r ** 2
+        to_mark &= (raw != -1)  # no tocar celdas desconocidas
+
+        # Nunca tapar al propio robot: OBSTACLE_DISTANCE_THRESHOLD (0.15 m) es
+        # menor que el radio de inflación (0.30 m), así que el círculo del
+        # obstáculo casi siempre alcanza la celda de inicio y Theta* fallaría
+        # antes de arrancar ("celda de inicio ocupada"). Se descarta del
+        # marcado un disco del MISMO radio r centrado en el robot: como son
+        # dos discos de igual radio con centros distintos, el del robot
+        # siempre sobresale del disco del obstáculo hacia el lado opuesto,
+        # garantizando al menos una salida para Theta*.
+        start_cell = self._world_to_grid(self.current_pose.pose.position.x,
+                                         self.current_pose.pose.position.y, grid)
+        if start_cell is not None:
+            srow, scol = start_cell
+            keep_clear = ((rows_idx - srow) ** 2 + (cols_idx - scol) ** 2) <= r ** 2
+            to_mark &= ~keep_clear
+
+        raw[to_mark] = 100
+        augmented.data = raw.flatten().tolist()
+        return augmented
 
     def _reached_goal_position(self) -> bool:
         """
@@ -723,36 +878,6 @@ class RobotNavigator(Node):
         cmd.linear.x  = v
         cmd.angular.z = omega
         return cmd
-
-    def _execute_avoidance_maneuver(self) -> bool:
-        if self.last_scan is None:
-            self._stop_robot()
-            return False
-
-        # Inicializar el yaw de referencia al comenzar la maniobra
-        if self._avoid_yaw_start is None:
-            self._avoid_yaw_start = self._get_yaw_from_pose(self.current_pose)
-            self._avoid_turn_sign = self._pick_clearer_side()
-            lado = 'izquierda' if self._avoid_turn_sign > 0 else 'derecha'
-            self.get_logger().info(f'Obstáculo: girando 110° hacia la {lado}.')
-
-        # ¿Cuánto giré desde el inicio de la maniobra?
-        yaw_now = self._get_yaw_from_pose(self.current_pose)
-        delta = abs(math.atan2(math.sin(yaw_now - self._avoid_yaw_start),
-                               math.cos(yaw_now - self._avoid_yaw_start)))
-
-        if delta >= self.AVOID_ROTATION_ANGLE:
-            self._stop_robot()
-            self._avoid_turn_sign = 0.0
-            self._avoid_yaw_start = None   # reset para la próxima
-            self.get_logger().info('Rotación de evasión completa.')
-            return True
-
-        cmd = Twist()
-        cmd.linear.x = 0.0
-        cmd.angular.z = self._avoid_turn_sign * self.AVOID_ANGULAR_SPEED
-        self.pub_cmd_vel.publish(cmd)
-        return False
 
     # def _execute_avoidance_maneuver(self) -> bool:
     #     """
