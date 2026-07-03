@@ -186,7 +186,7 @@ Todos en `despliegue_pkg/robot_parte_c.py`, en el `__init__` de `RobotNavigatorC
 
 | Parámetro | Valor actual | Descripción |
 |---|---|---|
-| `CONE_GOAL_OFFSET` | `0.30` m | Distancia a la que para antes del cono. Bajar para llegar más cerca (mínimo ~0.25 para no chocar con el mapa inflado) |
+| `CONE_GOAL_OFFSET` | `0.40` m | Distancia a la que para antes del cono. Bajar para llegar más cerca (mínimo ~0.25 para no chocar con el mapa inflado) |
 | `EXPLORE_LINEAR_SPEED` | `0.12` m/s | Velocidad de exploración |
 | `EXPLORE_ANGULAR_SPEED` | `0.5` rad/s | Velocidad de giro al esquivar obstáculos |
 | `EXPLORE_OBSTACLE_DIST` | `0.4` m | Distancia a la que empieza a girar |
