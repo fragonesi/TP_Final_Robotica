@@ -111,14 +111,30 @@ Todo está en `src/TP_Final_Robotica/TP_Final_Robotica/` y commiteado en la bran
   `entrega_parte_A/` (ahora con el mapa de la **corrida larga de 46,8 min**,
   el de `Rosbags/corrida2_run/slam_out_v2/`) están commiteados y pusheados en
   `fix-relocalizing-completo`.
-- [ ] **Reconciliar con `join_parts`**: el 02/07 apareció en el remoto la branch
-  `join_parts` (de fragonesi), creada desde el `main` viejo con el layout PRA
-  (`PRA_A/B/C` + `mapa_completo/` con varias corridas de salida). Trae cambios
-  propios en `graph_slam.py` (odom yaw std 1°→3°), `occupancy_grid.py`
-  (`p_occ/p_free` 0.85/0.35, PNGs de progreso, recorte `max_scan_idx`) y
-  `slam_pipeline.py` — tocan las mismas funciones que el fix de la silla, así
-  que el merge con esta branch va a necesitar reconciliación manual (y decidir
-  qué layout queda: el workspace colcon de acá o el PRA de allá).
+- [x] **Reconciliar con `join_parts`** *(revisada 03/07 — decisión: esta branch
+  queda como canónica)*: `join_parts` (de fragonesi, 02/07, desde el `main`
+  viejo, layout PRA `PRA_A/B/C` + `mapa_completo/`) se revisó archivo por
+  archivo. Resultado: **Parte C es byte-idéntica** a `src/parte_C/` (nada que
+  traer). **Parte A**: sus cambios (odom yaw std 1°→3°, `p_occ/p_free`
+  0.85/0.35 hardcodeado, PNGs de progreso, recorte `max_scan_idx`) NO se
+  adoptan — nos quedamos con nuestra versión (los PNGs de progreso podrían
+  portarse para el informe si hiciera falta). **Parte B**: su aporte real es la
+  parametrización `robot:=tb4` dentro de los nodos (tópicos `/tb4_N/*`, QoS
+  BEST_EFFORT, offset LIDAR +90°, filtro de intensidad), pero borra todos los
+  docstrings; cubrimos el mismo caso de uso con `robot_real.launch.py` (abajo)
+  y la adaptación real al TB4 ya vive en `src/parte_C/`.
+- [x] **Parte B — fixes de PruebaB integrados** *(03/07)*: del zip `PruebaB.zip`
+  (compañera) se integraron a `src/navegacion_pkg`: (1) `localization_node`
+  ahora publica la **TF `map→odom`** con la media ponderada de las partículas
+  (misma idea que `parte_C/localization_node_tb4.py`); (2) `map_publisher`
+  vuelve a publicar **periódico a 1 Hz**; (3) **`launch/robot_real.launch.py`**
+  nuevo — el stack completo remapeado a `/tb4_0/{odom,scan,cmd_vel}`;
+  (4) el mapa del paquete ahora es **el de la entrega (corrida larga 46,8 min)**
+  (la compañera ya usaba un mapa de esa corrida, `salida_8000`; se estandarizó
+  al final). Además se pasaron los subs de odom/scan de `localization_node` y
+  el scan de `robot.py` a **QoS BEST_EFFORT** (gotcha conocido: el TB4 real y
+  sus bags publican BEST_EFFORT; una suscripción RELIABLE no recibe nada — el
+  launch remapeado no anduvo sin esto; compatible con la sim).
 
 ## ⚠️ Importante: el bag del laberinto NO está incluido
 
