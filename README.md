@@ -1,14 +1,59 @@
-# TP Final — Robótica Autónoma · Parte A (Opción 3: *Features con Cámara*)
+# TP Final — Robótica Autónoma (Partes A, B y C)
+
+Trabajo Práctico Final completo: **Parte A** (SLAM offline contra rosbags del
+TurtleBot4 real, Opción 3 — *Features con Cámara*), **Parte B** (navegación
+autónoma en simulación Gazebo, con un modo adicional para correr el mismo
+stack contra el robot real) y **Parte C** (despliegue en el TurtleBot4 físico +
+misión de búsqueda de conos rojos). Código, comentarios y documentación en
+**español**.
+
+> **Materia:** I-402 — Principios de la Robótica Autónoma (UdeSA).
+> **Opción elegida en Parte A:** 3 (Features con Cámara) → determina que en
+> Parte B se use "Sistema 3: Grilla + Landmarks de Cámara" (ver más abajo).
+
+Este README cubre las tres partes de punta a punta: **cómo generar el mapa**
+(Parte A), **cómo correr la navegación** (Parte B, en Gazebo o contra el robot
+real) y **cómo desplegar en el TurtleBot4 físico** (Parte C). Cada parte tiene
+también su propia documentación más detallada:
+- Parte A: este mismo archivo (abajo) + `TpParteA.md` (bitácora de decisiones/bugs).
+- Parte C: `src/despliegue_pkg/README_ParteC.md` (guía completa paso a paso).
+
+---
+
+## Estructura del repo
+
+Workspace `colcon`/`ament_python` con **paquetes** bajo `src/`:
+
+```
+TP_Final_Robotica/                 ← raíz del workspace (acá se corre colcon)
+├── README.md                      ← este archivo
+├── ESTADO.md                      ← bitácora de avances / handoff
+├── TpParteA.md                    ← log detallado de decisiones, bugs y soluciones (Parte A)
+├── entrega_parte_A/                ← entregables finales de Parte A (mapa + landmarks)
+└── src/
+    ├── aruco_pkg/                 ← Parte A: percepción ArUco + odometría + modelo de ruido
+    ├── slam_pkg/                  ← Parte A: GraphSLAM (back-end) + grilla de ocupación
+    ├── navegacion_pkg/             ← Parte B: localización (filtro de partículas) +
+    │                                  Theta* + Pure Pursuit + máquina de estados
+    ├── aruco_sim_msgs/             ← Parte B: mensaje custom para el sensor virtual de ArUco
+    ├── aruco_sim_pkg/              ← Parte B (Sistema 3): sensor virtual de landmarks para
+    │                                  Gazebo (densidad + oclusión por línea de visión)
+    ├── turtlebot3_custom_simulation/ ← mundos y launch files de Gazebo (`custom_casa*.launch.py`)
+    └── despliegue_pkg/             ← Parte C: despliegue en TurtleBot4 real
+        └── cono_detector_pkg/      ← detector de conos rojos (paquete anidado, ver Build)
+```
+
+> Los rosbags y los CSV/PNG generados **no van a git** (pesan demasiado; ver
+> `.gitignore`).
+
+---
+
+# Parte A — SLAM (Opción 3: Features con Cámara)
 
 SLAM offline para un **TurtleBot4** en un laberinto: se construye un mapa del
 entorno mientras se estima la pose del robot, todo **contra rosbags pre-grabados**
 (no hay robot en vivo ni *ground truth*). El mapa resultante es la base de las
-Partes B y C. Código, comentarios y documentación en **español**.
-
-> **Materia:** I-402 — Principios de la Robótica Autónoma (UdeSA).
-> **Entrega:** Parte A únicamente. Opción elegida: **3 (Features con Cámara)**.
-
----
+Partes B y C.
 
 ## Qué entrega esta parte (los dos entregables)
 
@@ -44,41 +89,6 @@ Antes de correr nada, tener presente:
    de ROS 2 es `RELIABLE`, y el mismatch hace que **no se entregue ningún mensaje**
    (solo un warning de "QoS incompatible"). `odom_delta_node` y `scan_logger_node`
    ya lo declaran explícito.
-
----
-
-## Estructura del repo
-
-Workspace `colcon`/`ament_python` con **dos paquetes** bajo `src/`:
-
-```
-TP_Final_Robotica/                 ← raíz del workspace (acá se corre colcon)
-├── README.md                      ← este archivo
-├── ESTADO.md                      ← bitácora de avances / handoff
-├── TpParteA.md                    ← log detallado de decisiones, bugs y soluciones
-└── src/
-    ├── aruco_pkg/                 ← PERCEPCIÓN + odometría + modelo de ruido
-    │   ├── aruco_pkg/
-    │   │   ├── aruco_detector_node.py   detección ArUco + pose 3D (solvePnP)
-    │   │   ├── odom_delta_node.py        odometría → deltas (rot1, trans, rot2)
-    │   │   ├── aruco_noise_model.py      covarianza dependiente de la distancia
-    │   │   └── aruco_dict_probe.py       (debug) prueba ~20 diccionarios ArUco
-    │   ├── scripts/                      fit_noise_model.py · plot_odom.py
-    │   └── config/                       calibracion_ejemplo.yaml
-    └── slam_pkg/                  ← GRAPH SLAM (back-end)
-        ├── slam_pkg/
-        │   ├── graph_slam.py             núcleo: mínimos cuadrados disperso (LM)
-        │   ├── slam_pipeline.py          "corré-todo": CSV → entregables
-        │   ├── graph_slam_node.py        nodo ROS para RViz (/belief, /landmarks…)
-        │   ├── occupancy_grid.py         2da pasada: grilla de ocupación (.pgm/.yaml)
-        │   ├── scan_logger_node.py       registra los LaserScan a CSV
-        │   └── gslam.py                  (borrador de referencia, NO ejecutable)
-        ├── launch/                       slam.launch.py · perception.launch.py
-        └── rviz/                         slam.rviz
-```
-
-> Los rosbags y los CSV/PNG generados **no van a git** (pesan demasiado; ver
-> `.gitignore`). El bag del laberinto (~8 GB) se descarga aparte.
 
 ---
 
@@ -191,8 +201,14 @@ Genera en `salida/`:
 ```bash
 ros2 launch slam_pkg slam.launch.py \
     odom_csv:=/ruta/odom_deltas.csv \
-    aruco_csv:=/ruta/laberinto_detections.csv
+    aruco_csv:=/ruta/laberinto_detections.csv \
+    map_yaml_path:=/ruta/a/salida/mapa.yaml
 ```
+
+`map_yaml_path` es opcional (default vacío = no publica `/map`, el resto de
+RViz funciona igual); apunta al `mapa.yaml` que generó `slam_pipeline.py` en
+el Paso 2 (p. ej. `entrega_parte_A/mapa.yaml` para ver el mapa final ya
+entregado).
 
 Publica en los **tópicos canónicos** que esperan los profes:
 
@@ -201,7 +217,7 @@ Publica en los **tópicos canónicos** que esperan los profes:
 | `/belief`          | `nav_msgs/Path`        | trayectoria corregida |
 | `/landmarks`       | `MarkerArray`          | ArUcos estimados, por ID |
 | `/poses_guardadas` | `geometry_msgs/PoseArray` | nodos de pose del grafo |
-| `/map`             | `nav_msgs/OccupancyGrid` | grilla de ocupación (via `map_server`) |
+| `/map`             | `nav_msgs/OccupancyGrid` | grilla de ocupación, leída del `.pgm/.yaml` por `map_publisher_node` (nodo propio, liviano — no depende de `nav2_map_server`, que no está instalado en este workspace) |
 
 ---
 
@@ -256,17 +272,151 @@ colcon test && colcon test-result --verbose
 ## Estado y limitaciones conocidas
 
 - ✅ **Percepción, odometría, GraphSLAM y cierre de lazo**: completos y verificados
-  sobre el bag real (50 landmarks coherentes; χ² baja con gating).
-- ✅ **Trayectoria corregida** y **landmarks por ID**: entregables listos.
+  sobre el bag real (46-50 landmarks coherentes; χ² baja con gating).
+- ✅ **Trayectoria corregida** y **landmarks por ID**: entregables listos
+  (`entrega_parte_A/`).
 - ✅ **Modelo de ruido ArUco (`std = a + b·d`) enchufado en GraphSLAM**: covarianza
   de cada observación sale del fit real (propagada de cartesiano a rango-bearing),
   con término sistemático de escala para evitar sobre-confianza en el rango.
-- 🟡 **Grilla de ocupación**: se genera y exporta. Afinada (29/06) con **cap de rango**
-  (~5 m, saca los chorros espurios), **más cobertura de barridos** (4000), **filtrado por
-  intensidad** (`scan_logger` guarda `i0..iN`) y **scan-matching contra el mapa** (estilo
-  Hector: `LikelihoodField` + Gauss-Newton por barrido, flag `--sm-passes`) que adelgaza
-  el borrón de las paredes (error de pose). El salto final de nitidez requeriría edges de
-  scan-matching dentro del GraphSLAM (pendiente, agregado mayor). Ver `TpParteA.md`.
+- ✅ **`/map` en RViz** (03/07): `map_publisher_node` (nuevo, `slam_pkg`) publica el
+  `.pgm/.yaml` exportado como `nav_msgs/OccupancyGrid` con QoS `TRANSIENT_LOCAL` —
+  antes el tópico simplemente no existía pese a estar documentado y en `slam.rviz`.
+- ✅ **Paredes internas del laberinto recuperadas** (03/07, `entrega_parte_A/`
+  regenerado): el `mapa.pgm` capturaba bien el perímetro externo pero casi ninguna
+  pared interna, pese a que `trayectoria.png` mostraba un recorrido con muchos giros
+  que solo se explican si esas paredes existen. Causa raíz: `OccupancyGridMap`
+  (`occupancy_grid.py`) clippeaba el log-odds a `clamp=5.0` en **cada** actualización
+  (no solo al final); con los `p_occ`/`p_free` por defecto eso satura una celda
+  después de ~6 impactos o ~12 pasadas-libres consecutivas, muy poco para un
+  laberinto recorrido en varios lazos — el resultado terminaba dependiendo del
+  *orden reciente* de los eventos, no de la mayoría histórica (una celda con miles
+  de impactos reales podía quedar marcada libre solo por las últimas pasadas antes
+  de que el robot se alejara). Verificado contra los datos reales: el histograma
+  crudo de impactos (`grid.hits`) trazaba todo el interior del laberinto con
+  claridad; el mapa de probabilidad lo perdía casi por completo. Subir `clamp` a
+  **50** (nuevo default, expuesto como `--clamp` en `slam_pipeline.py`; probado
+  también 100 y 1000 sin mejora adicional) resuelve el problema. Detalle completo
+  en `entrega_parte_A/README.md` y `TpParteA.md` (03/07).
 
 > Bitácoras detalladas: **`ESTADO.md`** (avances/handoff) y **`TpParteA.md`**
 > (decisiones, bugs y cómo se resolvieron). Leerlas antes de extender la Parte A.
+
+---
+
+# Parte B — Navegación Autónoma (Sistema 3: Grilla + Landmarks de Cámara)
+
+El robot navega punto a punto sobre el mapa de la Parte A: localización por
+**filtro de partículas** (odometría + LIDAR + *likelihood field*), planificación
+con **Theta\*** sobre la grilla inflada, seguimiento con **Pure Pursuit**, alineación
+al ángulo final, replanificación ante nueva `goal_pose` o ante obstáculos no
+mapeados, y una **máquina de estados** (`WAITING → PLANNING → WALKING →
+AVOIDING/ALIGNING`) que gobierna todo. Paquete: `src/navegacion_pkg/`.
+
+Como la Parte A usó cámara (Opción 3), acá corresponde el **Sistema 3**: dado que
+Gazebo no tiene marcadores ArUco nativos, `src/aruco_sim_pkg/` implementa un
+**sensor virtual de landmarks** (`virtual_aruco_sensor_node`) que emula la densidad
+real (~1.4–1.6 landmarks/m², comparable a los ~50 ArUcos reales de la Parte A) y
+calcula **oclusión por línea de visión** contra paredes y muebles del mundo Gazebo
+(`src/aruco_sim_pkg/aruco_sim_pkg/occlusion.py`) — si algo se interpone, esa
+lectura no se publica.
+
+## Build
+
+```bash
+colcon build --packages-select navegacion_pkg aruco_sim_pkg aruco_sim_msgs \
+    turtlebot3_custom_simulation --symlink-install
+source install/setup.bash
+```
+
+## Cómo correr en simulación (Gazebo)
+
+```bash
+ros2 launch navegacion_pkg simulation.launch.py
+```
+
+Esto levanta Gazebo con `custom_casa.launch.py` (mundo `casa.world`), más
+`likelihood_field_node`, `localization_node` (filtro de partículas),
+`robot_node` (máquina de estados) y `map_publisher` (publica `/map`), y abre
+RViz. La consigna también pide probar contra `custom_casa_obs.launch.py`
+(mundo con obstáculos) — como `simulation.launch.py` referencia
+`custom_casa.launch.py` directo en el código (no hay un launch-argument para
+elegir el mundo), para probarlo hay que editar esa línea en
+`src/navegacion_pkg/launch/simulation.launch.py` para que apunte a
+`custom_casa_obs.launch.py` y volver a `colcon build`. **No existe** todavía
+`custom_casa_obs2.launch.py` (el mundo con más obstáculos y rutas cerradas que
+pide la consigna como desafío **opcional**).
+
+En RViz:
+1. **2D Pose Estimate** → fija la pose inicial (tópico `initialpose`); esperar a
+   que la nube de partículas converja.
+2. **2D Goal Pose** → fija el objetivo (tópico `goal_pose`); el robot planifica y
+   se mueve solo. Se puede repetir o cambiar de objetivo en cualquier momento
+   (el robot replanifica).
+
+> **`navegacion_pkg` usa dos mapas distintos según el modo** (arreglado 03/07 —
+> antes ambos modos compartían el mapa real de la Parte A, que no corresponde a
+> `casa.world`): `map_sim.pgm/.yaml` (~13×11 m, la misma escala y forma que
+> `casa.world`, con los muebles del mundo) para `simulation.launch.py`, y
+> `map.pgm/.yaml` (el mapa real de `entrega_parte_A/`, ~33×33 m) para
+> `robot_real.launch.py`. Lo selecciona el parámetro `map_yaml` del nodo
+> `map_publisher` (`simulation.launch.py` ya lo pasa; no hace falta tocar nada
+> a mano).
+
+## Cómo correr contra el robot real (sin la misión de conos)
+
+Para probar solo navegación punto a punto en el TurtleBot4 físico (sin la lógica
+de conos de la Parte C):
+
+```bash
+ros2 launch navegacion_pkg robot_real.launch.py
+```
+
+Remapea el mismo stack a `/tb4_0/{odom,scan,cmd_vel}` con QoS `BEST_EFFORT`
+(gotcha #2 de más arriba, aplicado también acá). Corre sobre el mapa real de
+`entrega_parte_A/` (`map.pgm/.yaml`, el default de `map_publisher`) — acá sí es
+el mapa correcto, porque el robot real está en el laberinto real. Seguir los
+mismos pasos de RViz (2D Pose Estimate, 2D Goal Pose) que en simulación.
+
+---
+
+# Parte C — Despliegue en TurtleBot4 real + búsqueda de conos rojos
+
+El robot explora el laberinto real de forma autónoma y navega hacia conos
+rojos cuando los detecta (ignorando conos de otros colores), evitando choques
+con paredes aunque vea un cono a través de una abertura. Paquete:
+`src/despliegue_pkg/` (+ `cono_detector_pkg/`, anidado).
+
+**Guía completa paso a paso:** `src/despliegue_pkg/README_ParteC.md` (build,
+las 4 terminales para correrlo, cómo hacer el 2D Pose Estimate, tabla de
+parámetros ajustables, topics). Resumen:
+
+```bash
+# Build (dos comandos: cono_detector_pkg está anidado y colcon no lo autodetecta)
+colcon build --packages-select despliegue_pkg --symlink-install
+colcon build --paths src/despliegue_pkg/cono_detector_pkg --symlink-install
+source install/setup.bash
+
+# Terminal 1 — navegación + mapa + localización
+ros2 launch despliegue_pkg robot_real.launch.py
+
+# Terminal 2 — detector de conos (corre aparte, no lo levanta el launch de arriba)
+ros2 run cono_detector_pkg detector_cono
+
+# Terminal 3 — robot real (no hace falta correr nada) o, para validar antes del
+# laboratorio, un rosbag de prueba:
+ros2 bag play /ruta/al/bag/laberinto_conos
+```
+
+Después, en RViz: **2D Pose Estimate** sobre la posición real del robot en el
+mapa (obligatorio cada vez que se arranca el sistema) y esperar a que el
+filtro de partículas converja — recién ahí el robot pasa a explorar solo.
+
+Cómo llega una detección de cono a un movimiento del robot: el detector
+(`cono_detector_pkg`) segmenta rojo por HSV (dos rangos, cruza el 0/180 del
+Hue) + filtro de área mínima, funde con el LIDAR para obtener rango, y publica
+un punto en frame del robot. La máquina de estados de Parte C
+(`robot_parte_c.py`) lo convierte a coordenadas del mapa y se lo pasa a
+**Theta\*** (heredado de Parte B) para planificar — el requisito de "no
+atravesar paredes caladas" lo cumple el planificador por diseño (nunca traza
+un camino a través de una celda ocupada del mapa de la Parte A), no una
+validación de línea de visión aparte en el detector.
