@@ -1,0 +1,47 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+Visualization Manager:
+  Global Options:
+    Fixed Frame: map
+    Background Color: 48; 48; 48
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Enabled: true
+    - Class: rviz_default_plugins/Map
+      Name: map (grilla de ocupación)
+      Enabled: true
+      Topic:
+        Value: /map
+        Durability Policy: Transient Local
+    - Class: rviz_default_plugins/Path
+      Name: belief (trayectoria corregida)
+      Enabled: true
+      Color: 25; 255; 0
+      Topic:
+        Value: /belief
+    - Class: rviz_default_plugins/PoseArray
+      Name: poses_guardadas (nodos del grafo)
+      Enabled: true
+      Topic:
+        Value: /poses_guardadas
+    - Class: rviz_default_plugins/MarkerArray
+      Name: landmarks (ArUco)
+      Enabled: true
+      Topic:
+        Value: /landmarks
+    - Class: rviz_default_plugins/LaserScan
+      Name: scan (LIDAR)
+      Enabled: true
+      Topic:
+        Value: /tb4_0/scan
+        Reliability Policy: Best Effort
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/FocusCamera
+  Views:
+    Current:
+      Class: rviz_default_plugins/TopDownOrtho
+      Name: Current View
+      Scale: 50
