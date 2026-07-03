@@ -10,7 +10,7 @@ import copy
 from scipy.ndimage import binary_dilation
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, QoSDurabilityPolicy
+from rclpy.qos import QoSProfile, QoSDurabilityPolicy, QoSReliabilityPolicy
 from enum import Enum, auto
 
 from nav_msgs.msg import OccupancyGrid, Path, Odometry
@@ -105,8 +105,11 @@ class RobotNavigator(Node):
         self.sub_goal = self.create_subscription(
             PoseStamped, '/goal_pose', self.cb_goal, 10)
 
+        # BEST_EFFORT: el TB4 real publica el scan como BEST_EFFORT; una
+        # suscripción RELIABLE no recibe nada. Compatible también con la sim.
+        qos_sensor = QoSProfile(depth=10, reliability=QoSReliabilityPolicy.BEST_EFFORT)
         self.sub_scan = self.create_subscription(
-            LaserScan, '/scan', self.cb_scan, 10)
+            LaserScan, '/scan', self.cb_scan, qos_sensor)
         
 
         # Publicadores ---------

@@ -58,18 +58,10 @@ class MapPublisher(Node):
             qos
         )
 
-        # self.timer = self.create_timer(
-        #     1.0,
-        #     self.publish_map
-        # )
-        
-        self.timer = self.create_timer(0.2, self.publish_map_once)
-        # self.publish_map()
+        # Periódico a 1 Hz: los nodos que arrancan tarde (o se relanzan) reciben
+        # el mapa igual, sin depender solo del TRANSIENT_LOCAL.
+        self.timer = self.create_timer(1.0, self.publish_map)
         self.get_logger().info("Map publisher listo")
-
-    def publish_map_once(self):
-        self.publish_map()
-        self.timer.cancel() 
 
     def publish_map(self):
         self.map_msg.header.stamp = self.get_clock().now().to_msg()

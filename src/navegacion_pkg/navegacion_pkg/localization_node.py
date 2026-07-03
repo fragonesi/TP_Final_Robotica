@@ -5,7 +5,7 @@ import numpy as np
 from nav_msgs.msg import OccupancyGrid, Odometry
 from sensor_msgs.msg import LaserScan
 from geometry_msgs.msg import PoseArray, Pose, PoseWithCovarianceStamped, Quaternion, PoseStamped
-from rclpy.qos import QoSProfile, QoSDurabilityPolicy
+from rclpy.qos import QoSProfile, QoSDurabilityPolicy, QoSReliabilityPolicy
 from tf2_ros import TransformBroadcaster
 from geometry_msgs.msg import TransformStamped
 
@@ -36,12 +36,15 @@ class LocalizationNode(Node):
         self.last_calc_odom = None
         
         qos_map = QoSProfile(depth=1, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
+        # BEST_EFFORT: el TB4 real (y sus bags) publica odom/scan como BEST_EFFORT;
+        # una suscripción RELIABLE no recibe nada. Compatible también con la sim.
+        qos_sensor = QoSProfile(depth=10, reliability=QoSReliabilityPolicy.BEST_EFFORT)
 
         self.create_subscription(OccupancyGrid, '/map', self.map_callback, qos_map)
-        self.create_subscription(OccupancyGrid, '/likelihood_map', self.likelihood_callback, qos_map)     
+        self.create_subscription(OccupancyGrid, '/likelihood_map', self.likelihood_callback, qos_map)
         self.create_subscription(PoseWithCovarianceStamped, '/initialpose', self.initialpose_callback, 10)
-        self.create_subscription(Odometry, '/calc_odom', self.odom_callback, 10)
-        self.create_subscription(LaserScan, '/scan', self.scan_callback, 10)
+        self.create_subscription(Odometry, '/calc_odom', self.odom_callback, qos_sensor)
+        self.create_subscription(LaserScan, '/scan', self.scan_callback, qos_sensor)
         
         self.belief_pub = self.create_publisher(PoseArray, '/belief', 10)
         self.tf_broadcaster = TransformBroadcaster(self)
@@ -200,6 +203,31 @@ class LocalizationNode(Node):
         self.belief_pub.publish(msg)
         self.publish_estimated_pose()
         self.publish_best_particle()
+        self._broadcast_map_odom_tf()
+
+    def _broadcast_map_odom_tf(self):
+        """Publica map->odom con la media ponderada de las partículas, para que
+        RViz y cualquier nodo que consuma TF tengan la pose corregida."""
+        if not self.initialized:
+            return
+        weights = np.array([p.weight for p in self.pf.particles])
+        total = weights.sum()
+        if total < 1e-10:
+            return
+        weights /= total
+        mean_x = float(np.sum(weights * np.array([p.x for p in self.pf.particles])))
+        mean_y = float(np.sum(weights * np.array([p.y for p in self.pf.particles])))
+        thetas = np.array([p.orientation for p in self.pf.particles])
+        mean_theta = float(np.arctan2(np.sum(weights * np.sin(thetas)), np.sum(weights * np.cos(thetas))))
+        t = TransformStamped()
+        t.header.stamp = self.get_clock().now().to_msg()
+        t.header.frame_id = 'map'
+        t.child_frame_id = 'odom'
+        t.transform.translation.x = mean_x
+        t.transform.translation.y = mean_y
+        t.transform.translation.z = 0.0
+        t.transform.rotation = yaw_to_quaternion(mean_theta)
+        self.tf_broadcaster.sendTransform(t)
 
 
 def main(args=None):
