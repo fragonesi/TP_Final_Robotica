@@ -100,10 +100,54 @@ Todo está en `src/TP_Final_Robotica/TP_Final_Robotica/` y commiteado en la bran
   Detalles y mediciones en `TpParteA.md` (02/07). También quedaron expuestos
   `--p-occ`/`--p-free` y el `mapa.png` ahora muestra la ocupación exportada.
 
+## Hecho (03/07 — fix del clamp de log-odds: paredes internas del laberinto recuperadas)
+
+- [x] **Bug encontrado y arreglado**: `entrega_parte_A/mapa.pgm` capturaba bien el
+  perímetro del laberinto pero casi ninguna pared interna, pese a que
+  `trayectoria.png` mostraba muchos giros/lazos que solo se explican si esas
+  paredes existen. Causa raíz en `OccupancyGridMap` (`occupancy_grid.py`): el clip
+  del log-odds (`clamp=5.0`) se aplicaba en **cada** actualización, no solo al
+  resultado final. Con los `p_occ`/`p_free` por defecto (0.7/0.4), eso satura una
+  celda después de apenas ~6 impactos o ~12 pasadas-libres consecutivas — muy poco
+  para un laberinto recorrido en varios lazos, donde una celda de pared puede
+  acumular miles de impactos a lo largo de la corrida. El resultado terminaba
+  dependiendo del **orden reciente** de los eventos, no de la mayoría histórica.
+  Verificado directamente contra `Rosbags/corrida2_run/`: celdas con miles de
+  impactos crudos (`grid.hits`, hasta 7.784 en una sola celda) quedaban con
+  log-odds `-5.0` (saturado "libre"). El histograma crudo de impactos trazaba
+  perfectamente todo el interior del laberinto; el mapa de probabilidad lo perdía
+  casi por completo.
+- [x] **Fix**: subir `clamp` de 5 a **50** (probado también 100 y 1000 contra los
+  datos reales — sin mejora adicional respecto de 50, así que se usa el valor más
+  moderado). Expuesto como `--clamp` en `slam_pipeline.py` (default 50).
+  `entrega_parte_A/` regenerado con el fix (misma trayectoria/landmarks — el fix
+  solo toca la grilla — `mapa.pgm`/`mapa.yaml`/`mapa.png` reemplazados). El rescate
+  manual por impactos (`--min-hits-occ`) pasó de rescatar 30 celdas a solo 8 (el
+  consenso log-odds por sí solo ya resuelve casi todo con el clamp corregido).
+- [x] **`/map` en RViz para Parte A**: no existía ningún nodo publicándolo pese a
+  estar documentado y en `slam.rviz` (nadie corre `map_server`, ni está instalado
+  en este workspace). Nuevo `map_publisher_node` en `slam_pkg` (nodo propio, sin
+  dependencias nuevas — parsea el `.pgm/.yaml` a mano) publica `/map` con QoS
+  `TRANSIENT_LOCAL`; expuesto en `slam.launch.py` como arg `map_yaml_path`.
+- [x] **Parte B — mapa de Gazebo vs. mapa real**: `navegacion_pkg` compartía un
+  solo `map.pgm/.yaml` entre `simulation.launch.py` (Gazebo, `casa.world`, ~13×11 m)
+  y `robot_real.launch.py` (robot real, laberinto, ~33×33 m) desde el commit
+  `aa03121` (03/07) que estandarizó al mapa real — rompiendo la localización en
+  modo Gazebo (geometría incompatible). Agregado `map_sim.pgm/.yaml` (el mapa a
+  escala de `casa.world` que ya estaba en `turtlebot3_custom_simulation/worlds/map/`,
+  sin usar) + parámetro `map_yaml` en `map_publisher.py` para elegir cuál cargar;
+  `simulation.launch.py` ahora pasa `map_sim.yaml`, `robot_real.launch.py` sigue
+  con el mapa real (default). Verificado con `ros2 topic echo /map` en ambos modos.
+- [x] **Limpieza de `package.xml`/`setup.py`**: `navegacion_pkg` y `despliegue_pkg`
+  no declaraban ninguna dependencia real (rclpy, numpy, scipy, PIL, tf2_ros...)
+  pese a usarlas todas — completadas. Sacados los placeholders `TODO:`/`tu_nombre`
+  de descripción/licencia/maintainer en 5 paquetes.
+
 ## Pendiente
 - [ ] **Nitidez final (opcional, agregado grande)**: para el salto final de paredes
   finas haría falta meter edges de **scan-matching dentro del GraphSLAM** (no solo en la
-  2da pasada de la grilla).
+  2da pasada de la grilla). El fix del clamp (03/07) resuelve la omisión de
+  estructura; esto sería solo un afinado adicional de nitidez.
 - [ ] **Cierre de entrega**: la integración con la Parte B. (El mapa final +
   `landmarks.json` ya están empaquetados en `entrega_parte_A/`; launch files y
   config `.rviz` ya están en el repo.)

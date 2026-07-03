@@ -31,6 +31,7 @@ setup(
         'console_scripts': [
             'graph_slam_node = slam_pkg.graph_slam_node:main',
             'scan_logger_node = slam_pkg.scan_logger_node:main',
+            'map_publisher_node = slam_pkg.map_publisher_node:main',
         ],
     },
 )

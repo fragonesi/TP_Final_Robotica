@@ -27,7 +27,7 @@ from graph_slam import build_from_csv
 def run(odom_csv, aruco_csv=None, out_dir='slam_out', scans_csv=None,
         iterations=30, gate_chi2=13.8, max_scans=4000, range_cap=5.0,
         intensity_min=0.0, scan_match=True, sm_passes=2,
-        p_occ=0.7, p_free=0.4, min_hits_occ=None, **kw):
+        p_occ=0.7, p_free=0.4, clamp=50.0, min_hits_occ=None, **kw):
     os.makedirs(out_dir, exist_ok=True)
 
     g = build_from_csv(odom_csv, aruco_csv, **kw)
@@ -84,7 +84,7 @@ def run(odom_csv, aruco_csv=None, out_dir='slam_out', scans_csv=None,
         grid = build_grid_from_scans(opt, g.pose_times, scans_csv, max_scans=max_scans,
                                      range_cap=range_cap, intensity_min=intensity_min,
                                      scan_match=scan_match, sm_passes=sm_passes,
-                                     p_occ=p_occ, p_free=p_free)
+                                     p_occ=p_occ, p_free=p_free, clamp=clamp)
         prefix = os.path.join(out_dir, 'mapa')
         grid.export_ros_map(prefix, min_hits_occ=min_hits_occ)
         if min_hits_occ is not None:
@@ -132,6 +132,11 @@ def main():
     ap.add_argument('--p-free', type=float, default=0.4,
                     help='prob. del modelo inverso para las celdas atravesadas (acercar a 0.5 '
                          'para que las pasadas de rayo no borren obstáculos finos)')
+    ap.add_argument('--clamp', type=float, default=50.0,
+                    help='cota del log-odds por celda (se aplica en cada update). Un clamp '
+                         'chico (viejo default: 5) hace que celdas vistas miles de veces (lazos '
+                         'repetidos) dependan del orden reciente de hits/libres en vez de la '
+                         'mayoría histórica, y puede borrar paredes internas enteras.')
     ap.add_argument('--min-hits-occ', type=int, default=None,
                     help='celdas con >= este nro de impactos LIDAR se exportan ocupadas aunque '
                          'el consenso log-odds las marque libres (rescata obstáculos finos que '
@@ -147,7 +152,7 @@ def main():
         gate_chi2=a.gate_chi2, max_scans=a.max_scans,
         range_cap=(None if a.range_cap <= 0 else a.range_cap),
         intensity_min=a.intensity_min, scan_match=(not a.no_scan_match), sm_passes=a.sm_passes,
-        p_occ=a.p_occ, p_free=a.p_free, min_hits_occ=a.min_hits_occ,
+        p_occ=a.p_occ, p_free=a.p_free, clamp=a.clamp, min_hits_occ=a.min_hits_occ,
         kf_trans=a.kf_trans, kf_rot=np.deg2rad(a.kf_rot_deg),
         noise_model_path=a.noise_model, scale_uncertainty=a.scale_uncertainty)
 

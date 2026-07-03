@@ -25,9 +25,21 @@ def _logodds(p):
 
 class OccupancyGridMap:
     def __init__(self, resolution=0.05, origin=(0.0, 0.0), size=(200, 200),
-                 p_occ=0.7, p_free=0.4, clamp=5.0):
+                 p_occ=0.7, p_free=0.4, clamp=50.0):
         """resolution [m/celda], origin = esquina inferior-izquierda [m],
-        size = (ancho, alto) en celdas. p_occ/p_free: prob. inversa del sensor."""
+        size = (ancho, alto) en celdas. p_occ/p_free: prob. inversa del sensor.
+
+        clamp: el clip se aplica en CADA update (no solo al final), así que un
+        clamp chico satura el log-odds después de muy pocos eventos consecutivos
+        del mismo signo (con los p_occ/p_free por defecto, l_occ≈0.85 y
+        l_free≈-0.41: clamp=5 satura a los ~6 hits o ~12 pasadas-libres). En una
+        celda vista miles de veces a lo largo de varios lazos (loop closure), eso
+        vuelve el resultado dependiente del ORDEN reciente de eventos en vez de
+        la mayoría histórica: una celda de pared con miles de hits terminaba
+        marcada libre solo porque las últimas ~12 pasadas antes de terminar el
+        recorrido fueron rayos que la atravesaban sin impactar. Con clamp=50
+        (verificado contra los datos reales del laberinto) las paredes internas,
+        invisibles antes pese a tener miles de impactos crudos, se recuperan."""
         self.res = float(resolution)
         self.ox, self.oy = float(origin[0]), float(origin[1])
         self.w, self.h = int(size[0]), int(size[1])
@@ -292,7 +304,7 @@ def build_grid_from_scans(poses, pose_times, scans_csv, resolution=0.05, max_sca
                           laser_offset=(-0.04, 0.0, np.pi / 2),
                           range_cap=5.0, intensity_min=0.0,
                           scan_match=False, sm_passes=2, sm_iters=6, sm_blur0=3.0,
-                          p_occ=0.7, p_free=0.4):
+                          p_occ=0.7, p_free=0.4, clamp=50.0):
     """Proyecta los barridos del LIDAR sobre la trayectoria corregida y devuelve la
     grilla. scans_csv: salida de scan_logger_node. Submuestrea a <= max_scans para
     acotar el costo (más barridos → paredes mejor consensuadas, menos borrón).
@@ -315,7 +327,13 @@ def build_grid_from_scans(poses, pose_times, scans_csv, resolution=0.05, max_sca
     p_occ/p_free: modelo inverso del sensor. Con los defaults (0.7/0.4) un impacto
     compensa ~2 pasadas de rayo; los obstáculos FINOS (patas de silla: ~2 cm en celdas
     de 5 cm) reciben muchas más pasadas que impactos y el consenso los borra. Para que
-    sobrevivan, subir p_occ / acercar p_free a 0.5 (p.ej. 0.75/0.45)."""
+    sobrevivan, subir p_occ / acercar p_free a 0.5 (p.ej. 0.75/0.45).
+
+    clamp: ver OccupancyGridMap — un clamp chico (el viejo default, 5) hace que el
+    log-odds de una celda vista miles de veces (típico en un laberinto con varios
+    lazos) dependa del orden reciente de hits/pasadas-libres en vez de la mayoría
+    histórica, y puede borrar paredes internas enteras pese a tener miles de
+    impactos reales. Ver TpParteA.md (03/07)."""
     import pandas as pd
     df = pd.read_csv(scans_csv)
     step = max(1, len(df) // max_scans)
@@ -328,7 +346,7 @@ def build_grid_from_scans(poses, pose_times, scans_csv, resolution=0.05, max_sca
     eff_max = range_max if range_cap is None else min(range_max, range_cap)
 
     grid = OccupancyGridMap.auto(poses[:, :2], range_max=range_max, resolution=resolution,
-                                 p_occ=p_occ, p_free=p_free)
+                                 p_occ=p_occ, p_free=p_free, clamp=clamp)
     ldx, ldy, ldyaw = laser_offset
     n = len(rcols)
 
