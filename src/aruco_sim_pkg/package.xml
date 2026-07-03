@@ -4,7 +4,7 @@
   <name>aruco_sim_pkg</name>
   <version>0.0.1</version>
   <description>Sensor virtual de landmarks ArUco para Gazebo (TP Final Parte B, Sistema 3)</description>
-  <maintainer email="tu_email@example.com">tu_nombre</maintainer>
+  <maintainer email="Elianaostro@gmail.com">eliana</maintainer>
   <license>Apache-2.0</license>
 
   <exec_depend>rclpy</exec_depend>

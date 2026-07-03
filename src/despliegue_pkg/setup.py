@@ -20,8 +20,8 @@ setup(
     zip_safe=True,
     maintainer='romanella',
     maintainer_email='romacolombini@gmail.com',
-    description='TODO: Package description',
-    license='TODO: License declaration',
+    description='Despliegue en TurtleBot4 real: localización, navegación y misión de conos — TP Final Parte C',
+    license='Apache-2.0',
     extras_require={
         'test': [
             'pytest',

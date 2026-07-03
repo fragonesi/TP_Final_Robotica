@@ -13,14 +13,18 @@ setup(
         ('share/' + package_name + '/launch',
         ['launch/simulation.launch.py', 'launch/robot_real.launch.py']),
         ('share/' + package_name + '/rviz', ['rviz/tp_final.rviz']),
-        ('share/' + package_name, ['map.yaml', 'map.pgm']), # ponerlo o no ponerlo ? ***
+        # map.yaml/.pgm: mapa real (Parte A), usado por robot_real.launch.py.
+        # map_sim.yaml/.pgm: mapa a escala de Gazebo (casa.world), usado por
+        # simulation.launch.py -- son mundos de tamaño muy distinto (~13x11 m
+        # vs ~33x33 m), así que no pueden compartir un solo mapa.
+        ('share/' + package_name, ['map.yaml', 'map.pgm', 'map_sim.yaml', 'map_sim.pgm']),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
     maintainer='romanella',
     maintainer_email='romacolombini@gmail.com',
-    description='TODO: Package description',
-    license='TODO: License declaration',
+    description='Navegación autónoma (localización por filtro de partículas, Theta*, Pure Pursuit, máquina de estados) — TP Final Parte B',
+    license='Apache-2.0',
     extras_require={
         'test': [
             'pytest',

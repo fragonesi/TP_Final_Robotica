@@ -4,7 +4,7 @@
   <name>aruco_sim_msgs</name>
   <version>0.0.1</version>
   <description>Mensajes del sensor virtual de landmarks ArUco - TP Final Parte B (Sistema 3)</description>
-  <maintainer email="tu_email@example.com">tu_nombre</maintainer>
+  <maintainer email="Elianaostro@gmail.com">eliana</maintainer>
   <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
