@@ -242,6 +242,12 @@ class RobotNavigatorC(RobotNavigator):
             self._transition_c(StateC.ALIGNING)
             return
 
+        if self._walking_stuck():
+            self._stop_robot()
+            self.state = State.PLANNING
+            self._transition_c(StateC.PLANNING)
+            return
+
         cmd = self._compute_pure_pursuit_cmd()
         self.pub_cmd_vel.publish(cmd)
 
