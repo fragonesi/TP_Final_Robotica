@@ -32,6 +32,7 @@ class OccupancyGridMap:
         self.ox, self.oy = float(origin[0]), float(origin[1])
         self.w, self.h = int(size[0]), int(size[1])
         self.l = np.zeros((self.h, self.w))          # log-odds [row=y, col=x]
+        self.hits = np.zeros((self.h, self.w), dtype=np.int32)  # impactos crudos por celda
         self.l_occ = _logodds(p_occ)
         self.l_free = _logodds(p_free)
         self.clamp = float(clamp)
@@ -112,26 +113,58 @@ class OccupancyGridMap:
             if hit and self._in_bounds(c1, r1):              # celda del impacto
                 self.l[r1, c1] = np.clip(self.l[r1, c1] + self.l_occ,
                                          -self.clamp, self.clamp)
+                self.hits[r1, c1] += 1
 
     # -- salidas ------------------------------------------------------------- #
     def prob(self):
         """Mapa de probabilidad de ocupación [0,1]."""
         return 1.0 - 1.0 / (1.0 + np.exp(self.l))
 
-    def to_occupancy(self, occ_thresh=0.65, free_thresh=0.25):
+    @staticmethod
+    def _dilate(mask, rad):
+        """Dilatación binaria con elemento cuadrado (2·rad+1), numpy puro."""
+        out = mask.copy()
+        h, w = mask.shape
+        for dr in range(-rad, rad + 1):
+            for dc in range(-rad, rad + 1):
+                if dr == 0 and dc == 0:
+                    continue
+                sr0, sr1 = max(0, dr), min(h, h + dr)
+                tr0, tr1 = max(0, -dr), min(h, h - dr)
+                sc0, sc1 = max(0, dc), min(w, w + dc)
+                tc0, tc1 = max(0, -dc), min(w, w - dc)
+                out[tr0:tr1, tc0:tc1] |= mask[sr0:sr1, sc0:sc1]
+        return out
+
+    def _occ_mask(self, occ_thresh, min_hits_occ=None, hits_iso_rad=2):
+        """Celdas ocupadas: por consenso log-odds y, opcionalmente, por evidencia
+        absoluta de impactos. min_hits_occ rescata los obstáculos FINOS (patas de
+        silla, paneles/paredes delgadas): una celda con cientos de retornos láser
+        contiene algo real aunque la mayoría de los rayos la atraviese sin impactar
+        (el log-odds la marca libre porque el objeto no llena la celda). Para no
+        engrosar las paredes ya consensuadas con su halo de impactos, el override
+        solo aplica a celdas a más de hits_iso_rad celdas de un ocupado por
+        consenso. None = solo consenso."""
+        occ = self.prob() >= occ_thresh
+        if min_hits_occ is not None:
+            iso = ~self._dilate(occ, hits_iso_rad)
+            occ |= (self.hits >= int(min_hits_occ)) & iso
+        return occ
+
+    def to_occupancy(self, occ_thresh=0.65, free_thresh=0.25, min_hits_occ=None):
         """Grilla estilo nav_msgs/OccupancyGrid: 0=libre, 100=ocupado, -1=desconocido."""
         p = self.prob()
         grid = np.full(p.shape, -1, dtype=np.int8)
-        grid[p >= occ_thresh] = 100
         grid[p <= free_thresh] = 0
+        grid[self._occ_mask(occ_thresh, min_hits_occ)] = 100
         return grid
 
-    def export_ros_map(self, prefix, occ_thresh=0.65, free_thresh=0.25):
+    def export_ros_map(self, prefix, occ_thresh=0.65, free_thresh=0.25, min_hits_occ=None):
         """Escribe <prefix>.pgm + <prefix>.yaml (formato map_server de ROS)."""
         p = self.prob()
         img = np.full(p.shape, 205, dtype=np.uint8)   # desconocido (gris)
         img[p <= free_thresh] = 254                    # libre (blanco)
-        img[p >= occ_thresh] = 0                       # ocupado (negro)
+        img[self._occ_mask(occ_thresh, min_hits_occ)] = 0   # ocupado (negro)
         img = np.flipud(img)                           # PGM: fila 0 arriba
         with open(prefix + '.pgm', 'wb') as f:
             f.write(b'P5\n%d %d\n255\n' % (self.w, self.h))
@@ -258,7 +291,8 @@ def scan_match_pose(field, pose, r, beta, laser_offset, iters=6,
 def build_grid_from_scans(poses, pose_times, scans_csv, resolution=0.05, max_scans=4000,
                           laser_offset=(-0.04, 0.0, np.pi / 2),
                           range_cap=5.0, intensity_min=0.0,
-                          scan_match=False, sm_passes=2, sm_iters=6, sm_blur0=3.0):
+                          scan_match=False, sm_passes=2, sm_iters=6, sm_blur0=3.0,
+                          p_occ=0.7, p_free=0.4):
     """Proyecta los barridos del LIDAR sobre la trayectoria corregida y devuelve la
     grilla. scans_csv: salida de scan_logger_node. Submuestrea a <= max_scans para
     acotar el costo (más barridos → paredes mejor consensuadas, menos borrón).
@@ -276,7 +310,12 @@ def build_grid_from_scans(poses, pose_times, scans_csv, resolution=0.05, max_sca
 
     scan_match: si True, refina la pose de cada barrido por scan-matching contra el
     mapa (Gauss-Newton sobre un likelihood field), en sm_passes pasadas coarse-to-fine
-    (blur decreciente). Corrige el jitter de pose → paredes más finas. Requiere pandas/scipy."""
+    (blur decreciente). Corrige el jitter de pose → paredes más finas. Requiere pandas/scipy.
+
+    p_occ/p_free: modelo inverso del sensor. Con los defaults (0.7/0.4) un impacto
+    compensa ~2 pasadas de rayo; los obstáculos FINOS (patas de silla: ~2 cm en celdas
+    de 5 cm) reciben muchas más pasadas que impactos y el consenso los borra. Para que
+    sobrevivan, subir p_occ / acercar p_free a 0.5 (p.ej. 0.75/0.45)."""
     import pandas as pd
     df = pd.read_csv(scans_csv)
     step = max(1, len(df) // max_scans)
@@ -288,7 +327,8 @@ def build_grid_from_scans(poses, pose_times, scans_csv, resolution=0.05, max_sca
     range_max = float(df['range_max'].iloc[0])
     eff_max = range_max if range_cap is None else min(range_max, range_cap)
 
-    grid = OccupancyGridMap.auto(poses[:, :2], range_max=range_max, resolution=resolution)
+    grid = OccupancyGridMap.auto(poses[:, :2], range_max=range_max, resolution=resolution,
+                                 p_occ=p_occ, p_free=p_free)
     ldx, ldy, ldyaw = laser_offset
     n = len(rcols)
 

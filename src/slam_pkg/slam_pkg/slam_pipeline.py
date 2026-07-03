@@ -26,7 +26,8 @@ from graph_slam import build_from_csv
 
 def run(odom_csv, aruco_csv=None, out_dir='slam_out', scans_csv=None,
         iterations=30, gate_chi2=13.8, max_scans=4000, range_cap=5.0,
-        intensity_min=0.0, scan_match=True, sm_passes=2, **kw):
+        intensity_min=0.0, scan_match=True, sm_passes=2,
+        p_occ=0.7, p_free=0.4, min_hits_occ=None, **kw):
     os.makedirs(out_dir, exist_ok=True)
 
     g = build_from_csv(odom_csv, aruco_csv, **kw)
@@ -82,11 +83,21 @@ def run(odom_csv, aruco_csv=None, out_dir='slam_out', scans_csv=None,
         from occupancy_grid import build_grid_from_scans
         grid = build_grid_from_scans(opt, g.pose_times, scans_csv, max_scans=max_scans,
                                      range_cap=range_cap, intensity_min=intensity_min,
-                                     scan_match=scan_match, sm_passes=sm_passes)
+                                     scan_match=scan_match, sm_passes=sm_passes,
+                                     p_occ=p_occ, p_free=p_free)
         prefix = os.path.join(out_dir, 'mapa')
-        grid.export_ros_map(prefix)
+        grid.export_ros_map(prefix, min_hits_occ=min_hits_occ)
+        if min_hits_occ is not None:
+            extra = int((grid._occ_mask(0.65, min_hits_occ) & ~(grid.prob() >= 0.65)).sum())
+            print(f"  override por impactos (hits>={min_hits_occ}, aislado de paredes): "
+                  f"{extra} celdas rescatadas del consenso")
+        # el PNG muestra la MISMA ocupación exportada (incluye el override de impactos)
+        occ = grid.to_occupancy(min_hits_occ=min_hits_occ)
+        img = np.full(occ.shape, 0.5)
+        img[occ == 0] = 0.0
+        img[occ == 100] = 1.0
         figm, axm = plt.subplots(figsize=(8, 8))
-        axm.imshow(grid.prob(), origin='lower', cmap='gray_r', vmin=0.0, vmax=1.0)
+        axm.imshow(img, origin='lower', cmap='gray_r', vmin=0.0, vmax=1.0)
         axm.set_title('Grilla de ocupación (LIDAR + trayectoria corregida)')
         figm.savefig(os.path.join(out_dir, 'mapa.png'), dpi=130, bbox_inches='tight')
         print('mapa       →', prefix + '.pgm/.yaml + mapa.png')
@@ -115,6 +126,16 @@ def main():
                     help='desactivar el scan-matching de la grilla (refinamiento de pose por barrido)')
     ap.add_argument('--sm-passes', type=int, default=2,
                     help='pasadas de scan-matching coarse-to-fine (más = paredes más finas, más costo)')
+    ap.add_argument('--p-occ', type=float, default=0.7,
+                    help='prob. del modelo inverso para la celda del impacto (subir para que '
+                         'sobrevivan obstáculos finos tipo patas de silla)')
+    ap.add_argument('--p-free', type=float, default=0.4,
+                    help='prob. del modelo inverso para las celdas atravesadas (acercar a 0.5 '
+                         'para que las pasadas de rayo no borren obstáculos finos)')
+    ap.add_argument('--min-hits-occ', type=int, default=None,
+                    help='celdas con >= este nro de impactos LIDAR se exportan ocupadas aunque '
+                         'el consenso log-odds las marque libres (rescata obstáculos finos que '
+                         'no llenan la celda, p.ej. patas de silla). Escalar con --max-scans.')
     ap.add_argument('--noise-model', default=None,
                     help='noise_model.json (fit_noise_model.py): covarianza ArUco fiteada '
                          'en vez de los std por defecto. Mejora mucho la nitidez del mapa.')
@@ -126,6 +147,7 @@ def main():
         gate_chi2=a.gate_chi2, max_scans=a.max_scans,
         range_cap=(None if a.range_cap <= 0 else a.range_cap),
         intensity_min=a.intensity_min, scan_match=(not a.no_scan_match), sm_passes=a.sm_passes,
+        p_occ=a.p_occ, p_free=a.p_free, min_hits_occ=a.min_hits_occ,
         kf_trans=a.kf_trans, kf_rot=np.deg2rad(a.kf_rot_deg),
         noise_model_path=a.noise_model, scale_uncertainty=a.scale_uncertainty)
 
