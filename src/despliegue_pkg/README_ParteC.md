@@ -29,7 +29,9 @@ WAITING → EXPLORING → CONE_DETECTED → PLANNING → WALKING → ALIGNING �
 ## Estructura del paquete
 
 ```
-TP_Final_Robotica_ParteC_v2/
+src/despliegue_pkg/                 ← (antes `src/parte_C/`, renombrado 03/07 para que la
+│                                       carpeta contenedora matchee el nombre del paquete
+│                                       colcon que tiene adentro, igual que aruco_pkg/slam_pkg/navegacion_pkg)
 ├── cono_detector_pkg/              ← detector de conos rojos (NUEVO Parte C)
 │   └── cono_detector_pkg/
 │       └── detector_cono_node.py  ← segmentación HSV + fusión LIDAR
@@ -62,9 +64,16 @@ TP_Final_Robotica_ParteC_v2/
 
 ```bash
 cd ~/turtlebot3_ws
-colcon build --packages-select despliegue_pkg cono_detector_pkg --symlink-install
+colcon build --packages-select despliegue_pkg --symlink-install
+colcon build --paths src/despliegue_pkg/cono_detector_pkg --symlink-install
 source install/setup.bash
 ```
+
+`cono_detector_pkg` está anidado dentro de la carpeta de `despliegue_pkg`, y colcon
+no desciende a buscar paquetes dentro de la carpeta de otro paquete — por eso
+`--packages-select despliegue_pkg cono_detector_pkg` sólo builds `despliegue_pkg`
+(ignora `cono_detector_pkg` con un warning silencioso). Hay que buildearlo aparte
+con `--paths` apuntando directo a su carpeta.
 
 ---
 

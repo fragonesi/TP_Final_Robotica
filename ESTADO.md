@@ -136,6 +136,26 @@ Todo está en `src/TP_Final_Robotica/TP_Final_Robotica/` y commiteado en la bran
   el scan de `robot.py` a **QoS BEST_EFFORT** (gotcha conocido: el TB4 real y
   sus bags publican BEST_EFFORT; una suscripción RELIABLE no recibe nada — el
   launch remapeado no anduvo sin esto; compatible con la sim).
+- [x] **Renombrar `src/parte_C/` → `src/despliegue_pkg/`** *(03/07)*: la carpeta
+  contenedora ahora matchea el nombre del paquete colcon que tiene adentro
+  (`despliegue_pkg`), igual que `aruco_pkg`/`slam_pkg`/`navegacion_pkg`. Hecho
+  con `git mv` (preserva historial). No hizo falta tocar código: `package.xml`,
+  `setup.py` y los launch files ya referencian el paquete por nombre
+  (`get_package_share_directory('despliegue_pkg')`), no por ruta de carpeta, y
+  `build/`/`install/` ya estaban indexados por nombre de paquete. Verificado con
+  `colcon build --packages-select despliegue_pkg` (build ok) y con
+  `colcon build --paths src/despliegue_pkg/cono_detector_pkg` para el paquete
+  anidado (**gotcha pre-existente, no introducido por el rename**: colcon no
+  descubre `cono_detector_pkg` vía `--packages-select` porque está anidado
+  dentro de la carpeta de otro paquete — hay que buildearlo con `--paths`
+  explícito. El comando `colcon build --packages-select despliegue_pkg
+  cono_detector_pkg --symlink-install` de `README_ParteC.md` en realidad solo
+  buildeaba `despliegue_pkg` y tiraba un warning silencioso ignorando
+  `cono_detector_pkg` — **corregido** en la sección Build de ese README: ahora
+  son dos comandos, uno por paquete, el segundo con `--paths` explícito;
+  probado con `--symlink-install` y funciona). Las menciones
+  a `src/parte_C/` y `parte_C/...` más arriba son históricas y se refieren a
+  esta misma carpeta con su nombre viejo.
 
 ## ⚠️ Importante: el bag del laberinto NO está incluido
 
