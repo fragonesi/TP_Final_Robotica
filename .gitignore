@@ -1,1 +1,7 @@
 mapa_completo/scans.csv
+
+__pycache__/
+*.pyc
+build/
+install/
+log/
