@@ -619,6 +619,57 @@ class RobotNavigator(Node):
             self.get_logger().error('Theta*: celda de goal ocupada.')
             return []
 
+        # Si start/goal caen dentro del margen de seguridad, reubicar a la
+        # celda libre más cercana en vez de fallar directo -- común cuando el
+        # robot está pegado a una pared o el goal se pide muy cerca de un
+        # obstáculo (incluye el obstáculo dinámico marcado por
+        # _make_augmented_map, que ya se cuida de no tapar la celda de inicio,
+        # pero esto es una red de seguridad adicional para el resto de casos).
+        height_check = grid.info.height
+
+        def _grid_free(r, c):
+            if not (0 <= r < height_check and 0 <= c < width):
+                return False
+            v = grid.data[r * width + c]
+            return 0 <= v < 50
+
+        def _nearest_free(r, c, max_radius=40):
+            if _grid_free(r, c):
+                return (r, c)
+            from collections import deque
+            seen = {(r, c)}
+            q = deque([(r, c, 0)])
+            while q:
+                cr, cc, d = q.popleft()
+                if d >= max_radius:
+                    continue
+                for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1),
+                               (-1, -1), (-1, 1), (1, -1), (1, 1)):
+                    nr, nc = cr + dr, cc + dc
+                    if (nr, nc) in seen:
+                        continue
+                    seen.add((nr, nc))
+                    if _grid_free(nr, nc):
+                        return (nr, nc)
+                    if 0 <= nr < height_check and 0 <= nc < width:
+                        q.append((nr, nc, d + 1))
+            return None
+
+        if not _grid_free(rs, cs):
+            free = _nearest_free(rs, cs)
+            if free is None:
+                self.get_logger().warn('Theta*: inicio encerrado en zona inflada, sin celda libre cerca.')
+                return []
+            self.get_logger().info(f'Theta*: inicio reubicado de ({rs},{cs}) a celda libre {free}.')
+            rs, cs = free
+        if not _grid_free(rg, cg):
+            free = _nearest_free(rg, cg)
+            if free is None:
+                self.get_logger().warn('Theta*: goal encerrado en zona inflada, sin celda libre cerca.')
+                return []
+            self.get_logger().info(f'Theta*: goal reubicado de ({rg},{cg}) a celda libre {free}.')
+            rg, cg = free
+
         # 2) Heurística: distancia euclidiana.
         def h(r, c):
             return math.hypot(r - rg, c - cg)
