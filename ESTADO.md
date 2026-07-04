@@ -1,9 +1,15 @@
-# Estado del proyecto — Parte A (Opción 3)
+# Estado del proyecto — Partes A, B y C (Opción 3)
 
-> Actualización de avances y handoff. Última actualización: 2026-06-30.
-> Este repo contiene el workspace completo de la Parte A bajo `src/`:
-> `src/aruco_pkg` (percepción ArUco, odometría y modelo de ruido) y
-> `src/TP_Final_Robotica` (**GraphSLAM**).
+> Actualización de avances y handoff. Última actualización: 2026-07-03.
+> **El repo está partido en tres workspaces colcon independientes** (03/07):
+> `ParteA/` (percepción ArUco + GraphSLAM: `aruco_pkg`, `slam_pkg`),
+> `ParteB/` (navegación + sim: `navegacion_pkg`, `aruco_sim_*`,
+> `turtlebot3_custom_simulation`) y `ParteC/` (despliegue real: `despliegue_pkg`
+> + `cono_detector_pkg` anidado). Cada uno tiene su propio `src/` y se compila
+> por separado (`colcon build` dentro de la carpeta de la parte). Las entradas
+> más viejas de abajo dicen `src/<pkg>` a secas: hoy ese paquete vive bajo
+> `ParteX/src/<pkg>` (los nombres de paquete no cambiaron). Ver README para el
+> layout y los comandos de build/run por parte.
 
 ## Avances realizados
 
@@ -210,6 +216,28 @@ Parte A (hallazgos menores, no bloquean): piso de bearing 0.5° optimista vs
 asociación por keyframe (`graph_slam.py:412`), CSVs en modo append (mezcla
 corridas al re-correr percepción), header de `scans.csv` asume haces constantes,
 y falta TF map→odom + display de odom en `slam.rviz` para la demo en vivo.
+
+## Hecho (03/07 — repo partido en tres workspaces colcon)
+
+El repo pasó de un único workspace (todo bajo `src/` en la raíz) a **tres
+workspaces independientes**, uno por parte, con `git mv` (historia preservada,
+sin duplicar código):
+
+- [x] **`ParteA/src/`**: `aruco_pkg`, `slam_pkg`. Además `ParteA/TpParteA.md` y
+  `ParteA/entrega_parte_A/` (bitácora y entregables de A).
+- [x] **`ParteB/src/`**: `navegacion_pkg`, `aruco_sim_msgs`, `aruco_sim_pkg`,
+  `turtlebot3_custom_simulation`. Además `ParteB/temp.py` (visualizador scratch).
+- [x] **`ParteC/src/`**: `despliegue_pkg` (con `cono_detector_pkg` anidado).
+- [x] **En la raíz quedan solo los docs globales**: `README.md`, `ESTADO.md`,
+  `.gitignore`. Ya no hay `src/` ni `build/install/log` en la raíz.
+- [x] **Motivo/seguridad**: las partes no comparten paquetes entre sí (única
+  dep intra-repo: `aruco_sim_pkg`→`aruco_sim_msgs`, ambos de B), así que el
+  corte es limpio y cada parte compila aislada. Verificado con `colcon build`
+  en las tres (A: 2 pkg, B: 4 pkg, C: 1 + `cono_detector_pkg` con `--paths`),
+  todas OK. `.gitignore` ya ignora `build/install/log`/`__pycache__` en
+  cualquier nivel, así que los artefactos de cada parte no entran a git.
+- [x] **Build/run por parte**: `cd ParteX && colcon build && source
+  install/setup.bash`. README actualizado con el layout y los comandos nuevos.
 
 ## Pendiente
 - [ ] **Nitidez final (opcional, agregado grande)**: para el salto final de paredes
