@@ -7,16 +7,14 @@ import os
 
 
 def generate_launch_description():
-
+    """
+    Launches the nodes for Part C — Simulation.
+    """
     robot_id_arg = DeclareLaunchArgument(
         'robot_id', default_value='0',
         description='Número del TB4 (coincide con el namespace /tb4_<id>)',
     )
     robot_id = LaunchConfiguration('robot_id')
-
-    # Los nodos usan este parámetro para: hablar por /tb4_<id>/scan, /tb4_<id>/odom
-    # y /tb4_<id>/cmd_vel, aplicar el offset de 90° del LIDAR del TB4 y filtrar
-    # los rayos con intensidad 0. Sin esto corren con los defaults de TB3.
     robot_params = [{'robot': 'tb4', 'robot_id': robot_id}]
 
     rviz_config = os.path.join(
@@ -56,8 +54,6 @@ def generate_launch_description():
         parameters=robot_params,
     )
 
-    # RViz no tiene el parámetro 'robot': su config trae hardcodeado '/scan',
-    # así que hace falta remapearlo al tópico real del TB4.
     rviz_node = Node(
         package='rviz2',
         executable='rviz2',
@@ -69,9 +65,6 @@ def generate_launch_description():
         ]
     )
 
-    # map -> tb4_<id>/odom: sin este TF estático, RViz no puede ubicar el scan
-    # ni el robot dentro del frame "map" (la localización usa /estimated_pose,
-    # no TF, así que esto es solo para visualización).
     static_tf_node = Node(
         package='tf2_ros',
         executable='static_transform_publisher',

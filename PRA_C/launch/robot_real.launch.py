@@ -1,19 +1,19 @@
 """
-Launch file para Parte C — TurtleBot4 real.
+Launch file for Part C — Real TurtleBot4.
 
-Corre en paralelo con:
-  - ros2 bag play laberinto_conos  (o el robot real)
+Runs in parallel with:
+  - ros2 bag play laberinto_conos (or the real robot)
   - ros2 run cono_detector_pkg detector_cono
 
-Nodos lanzados:
-  1. likelihood_field_node  — genera el mapa de likelihood a partir del /map
-  2. localization_node_tb4  — filtro de partículas con topics /tb4_0/*
-  3. map_publisher          — publica /map desde el archivo .pgm/.yaml
-  4. robot_node_c           — FSM de Parte C con exploración + búsqueda de conos
-  5. rviz2                  — visualización (misma config que Parte B)
+Launched nodes:
+  1. likelihood_field_node  — generates the likelihood map from /map
+  2. localization_node_tb4  — particle filter using /tb4_0/* topics
+  3. map_publisher          — publishes /map from the .pgm/.yaml files
+  4. robot_node_c           — Part C FSM with exploration and cone search
+  5. rviz2                  — visualization (same configuration as Part B)
 
-El map_publisher se retrasa 5 s para asegurarse de que los demás nodos ya
-están escuchando antes de publicar el mapa con QoS TRANSIENT_LOCAL.
+The map_publisher is delayed by 5 seconds to ensure that the other nodes
+are already listening before publishing the map using TRANSIENT_LOCAL QoS.
 """
 
 import os
@@ -24,11 +24,11 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description():
-
+    """
+    Launches the nodes for Part C — Real TurtleBot4.
+    """
     pkg = get_package_share_directory('tpf')
-
     rviz_config = os.path.join(pkg, 'rviz', 'tp_final.rviz')
-
     likelihood_node = Node(
         package='tpf',
         executable='likelihood_field_node',
@@ -66,14 +66,12 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
-        # Arranca inmediatamente: likelihood y localización necesitan estar
-        # listos antes de que llegue el primer /map
+        # Arranca inmediatamente: likelihood y localización necesitan estar listos antes de que llegue el primer /map
         likelihood_node,
         localization_node,
         robot_node_c,
         rviz_node,
 
-        # El map_publisher se retrasa para que los suscriptores TRANSIENT_LOCAL
-        # ya existan cuando el mapa se publique por primera vez
+        # El map_publisher se retrasa para que los suscriptores TRANSIENT_LOCAL ya existan cuando el mapa se publique por primera vez
         TimerAction(period=5.0, actions=[map_publisher_node]),
     ])

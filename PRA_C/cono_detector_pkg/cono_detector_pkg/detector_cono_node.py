@@ -1,5 +1,4 @@
 import math
-
 import cv2
 import numpy as np
 import rclpy
@@ -16,10 +15,10 @@ HSV_ROJO_ALTO_1 = (10, 255, 255)
 HSV_ROJO_BAJO_2 = (170, 120, 70)
 HSV_ROJO_ALTO_2 = (180, 255, 255)
 
-AREA_MINIMA_PX = 300       # contornos mas chicos que esto se descartan como ruido
-VENTANA_LIDAR = 3          # rayos a cada lado del rayo objetivo para tomar el minimo
-OFFSET_LIDAR_TB4 = 90.0    # mismo offset usado en tp0.py: indice 0 del lidar no apunta al frente del robot
-RANGO_MAXIMO_VALIDO = 8.0  # descarta retornos de lidar absurdamente lejanos
+AREA_MINIMA_PX = 300 # contornos mas chicos que esto se descartan como ruido
+VENTANA_LIDAR = 3 # rayos a cada lado del rayo objetivo para tomar el minimo
+OFFSET_LIDAR_TB4 = 90.0 # mismo offset usado en tp0.py: indice 0 del lidar no apunta al frente del robot
+RANGO_MAXIMO_VALIDO = 8.0 # descarta retornos de lidar absurdamente lejanos
 
 
 class DetectorConoNode(Node):
@@ -65,14 +64,22 @@ class DetectorConoNode(Node):
         self.get_logger().info(f'Detector de conos iniciado (robot={robot}, img={image_topic}, scan={scan_topic})')
 
     def camera_info_callback(self, msg: CameraInfo):
-        # K = [fx 0 cx; 0 fy cy; 0 0 1] -> me interesa solo el eje horizontal para el bearing
+        """
+        Callback function to receive camera information and extract fx/cx from the pinhole model.
+        """
         self.fx = msg.k[0]
         self.cx = msg.k[2]
 
     def scan_callback(self, msg: LaserScan):
+        """
+        Callback function to receive the latest lidar scan and store it for distance projection.
+        """
         self.last_scan = msg
 
     def image_callback(self, msg: Image):
+        """
+        Callback function to receive the camera image, detect the red cone, and publish its position in robot coordinates.
+        """
         frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
         centroide = self.detectar_cono(frame)
 
@@ -90,6 +97,9 @@ class DetectorConoNode(Node):
         self.publicar_deteccion(bearing, distancia, msg)
 
     def detectar_cono(self, frame):
+        """
+        Detects the red cone in the image and returns the coordinates of the centroid (u, v) in pixels.
+        """
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
         mascara_1 = cv2.inRange(hsv, HSV_ROJO_BAJO_1, HSV_ROJO_ALTO_1)
         mascara_2 = cv2.inRange(hsv, HSV_ROJO_BAJO_2, HSV_ROJO_ALTO_2)
@@ -119,11 +129,17 @@ class DetectorConoNode(Node):
         return u, v
 
     def pixel_a_bearing(self, u):
+        """
+        Converts the horizontal pixel coordinate (u) of the detected cone into a bearing relative to the robot.
+        """
         # Modelo pinhole: angulo entre el rayo optico y el rayo hacia el pixel detectado.
         # u < cx (objeto a la izquierda en la imagen) -> bearing positivo (izquierda en convencion ROS, REP103)
         return math.atan2(self.cx - u, self.fx)
 
     def distancia_por_lidar(self, bearing):
+        """
+        Projects the bearing of the detected cone onto the latest lidar scan to find the distance to the cone.
+        """
         scan = self.last_scan
         if scan is None:
             return None
@@ -148,6 +164,9 @@ class DetectorConoNode(Node):
         return min(validos)
 
     def publicar_deteccion(self, bearing, distancia, img_msg: Image):
+        """
+        Publishes the detected cone's position as a PointStamped message in the robot's coordinate frame.
+        """
         punto = PointStamped()
         punto.header.stamp = img_msg.header.stamp
         punto.header.frame_id = self.frame_id
@@ -161,6 +180,9 @@ class DetectorConoNode(Node):
         )
 
     def publicar_imagen_debug(self, frame, contorno, centro):
+        """
+        Publishes a debug image showing the detected contour and centroid of the cone.
+        """
         debug = frame.copy()
         cv2.drawContours(debug, [contorno], -1, (0, 255, 0), 2)
         cv2.circle(debug, centro, 5, (255, 0, 0), -1)

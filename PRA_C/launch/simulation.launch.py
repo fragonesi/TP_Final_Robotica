@@ -7,7 +7,9 @@ import os
 
 
 def generate_launch_description():
-
+    """
+    Launches the nodes for Part C — Simulation.
+    """
     rviz_config = os.path.join(
         get_package_share_directory('tpf'),
         'rviz',
