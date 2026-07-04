@@ -33,10 +33,9 @@ TP_Final_Robotica/
 ├── PRA_B/                         ← Parte B: navegación (simulación TB3)
 │   └── src/navegacion_pkg/       ← FSM + Theta* + Pure Pursuit + filtro de partículas
 ├── PRA_C/                         ← Parte C: despliegue en TB4 real
-│   ├── src/
-│   │   │   ├── deploy_pkg/            ← FSM extendida + localización adaptada al TB4
-│   │   └── cono_detector_pkg/    ← detector de conos rojos (HSV + fusión LIDAR)
-│   └── README_ParteC.md          ← guía paso a paso de la Parte C
+│   └── src/
+│       ├── deploy_pkg/           ← FSM extendida + localización adaptada al TB4
+│       └── cono_detector_pkg/   ← detector de conos rojos (HSV + fusión LIDAR)
 ├── Informe_TP_Final_Robotica.pdf  ← informe técnico (documenta A, B y C)
 └── README.md                      ← este archivo
 ```
@@ -200,7 +199,10 @@ el filtro. Parámetros ajustables (velocidades de exploración, `CONE_GOAL_OFFSE
 radio de inflación) en `deploy_pkg/robot_parte_c.py` y `deploy_pkg/robot.py`.
 
 Nodos: `robot_node_c`, `localization_node_tb4`, `map_publisher`, `detector_cono`.
-Guía paso a paso (RViz, 2D Pose Estimate, HSV, topics): **`PRA_C/README_ParteC.md`**.
+
+Umbrales HSV del detector (`cono_detector_pkg/detector_cono_node.py`) calibrados con el
+bag `laberinto_conos`; reajustar según la iluminación del laboratorio. Detalle del
+comportamiento y del análisis sim-to-real, en el informe.
 
 ---
 
