@@ -10,10 +10,10 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
-        ('share/' + package_name + '/launch',
-        ['launch/simulation.launch.py']),
+	('share/' + package_name + '/launch',
+	 ['launch/simulation.launch.py', 'launch/robot_real.launch.py']),
         ('share/' + package_name + '/rviz', ['rviz/tp_final.rviz']),
-        ('share/' + package_name, ['map.yaml', 'map.pgm']), # ponerlo o no ponerlo ? ***
+        ('share/' + package_name, ['map.yaml', 'map.pgm']),
     ],
     install_requires=['setuptools'],
     zip_safe=True,

@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//home/admlinar/**)",
+      "Read(//home/admlinar/turtlebot3_ws/src/**)",
+      "Bash(ping -c 2 -W 2 172.23.16.88)",
+      "Bash(ip route *)",
+      "Bash(timeout 3 bash -c 'cat < /dev/null > /dev/tcp/172.23.16.88/11811')",
+      "Bash(awk 'NR>=250 && /def initialpose_callback/{f=1} f{print NR\": \"$0} f&&/def [a-z]/&&!/initialpose_callback/&&NR>l{c++} c>1{exit} {l=NR}' tpf/localization_node.py)",
+      "Bash(bash /tmp/claude-1000/-home-admlinar-turtlebot3-ws-src-PRA-B/a9cddc73-83c4-4847-9024-9eedd8491fcf/scratchpad/scan_monitor.sh)",
+      "Bash(awk '{print \"ultima escritura:\", $6, $7, $8}')",
+      "Bash(python3 -m py_compile tpf/robot.py)"
+    ]
+  }
+}

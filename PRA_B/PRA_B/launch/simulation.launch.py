@@ -87,7 +87,7 @@ from launch.actions import (
     DeclareLaunchArgument,
 )
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, PythonExpression
+from launch.substitutions import LaunchConfiguration, PythonExpression, PathJoinSubstitution
 from launch.conditions import IfCondition, UnlessCondition
 from ament_index_python.packages import get_package_share_directory
 import os
@@ -102,12 +102,19 @@ def generate_launch_description():
                                          description='Tipo de robot: tb3 (sim) o tb4 (real)')
     robot_id_arg = DeclareLaunchArgument('robot_id', default_value='0',
                                          description='Número del TB4: 0 o 1')
+    world_arg    = DeclareLaunchArgument('world',    default_value='casa',
+                                         description="Mundo de Gazebo: 'casa' (limpio) u 'obs' (casa_o.world, con obstáculos no mapeados para probar la evasión)")
 
     robot    = LaunchConfiguration('robot')
     robot_id = LaunchConfiguration('robot_id')
+    world    = LaunchConfiguration('world')
 
     # Condición: True cuando es simulación (TB3)
     is_simulation = PythonExpression(["'", robot, "' == 'tb3'"])
+
+    gazebo_launch_file = PythonExpression([
+        "'custom_casa_obs.launch.py' if '", world, "' == 'obs' else 'custom_casa.launch.py'"
+    ])
 
     # Parámetros que se pasan a los nodos
     robot_params = [{'robot': robot, 'robot_id': robot_id}]
@@ -132,11 +139,11 @@ def generate_launch_description():
     # Gazebo — solo para TB3
     # ---------------------------------------------------------------------------
     gazebo_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(os.path.join(
+        PythonLaunchDescriptionSource(PathJoinSubstitution([
             get_package_share_directory('turtlebot3_custom_simulation'),
             'launch',
-            'custom_casa.launch.py'
-        )),
+            gazebo_launch_file
+        ])),
         condition=IfCondition(is_simulation),
     )
 
@@ -193,6 +200,7 @@ def generate_launch_description():
     return LaunchDescription([
         robot_arg,
         robot_id_arg,
+        world_arg,
         gazebo_launch,
         static_tf_node,
         TimerAction(
