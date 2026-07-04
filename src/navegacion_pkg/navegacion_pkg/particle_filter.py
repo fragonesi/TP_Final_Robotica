@@ -74,9 +74,13 @@ class RobotFunctions:
         return samples    
 
     def move_particles(self, deltas):
+        # Ruido del modelo de odometría de Thrun (ver move_odom):
+        #   σ_rot   = a1·|rot| + a2·|dist|   → 10% de la rotación + 0.1 rad/m
+        #   σ_trans = a3·|dist| + a4·|rot|   → 2% de la distancia (patinaje real)
+        # Los [15.0, 15.0, ...] anteriores metían σ_rot ≈ 86° por cada 10 cm:
+        # la nube divergía sola y disparaba el guard de "degradada".
         for part in self.particles:
-            # part.move_odom(deltas, [0.1, 0.1, 0.001, 0.001])
-            part.move_odom(deltas, [15.0, 15.0, 0.2, 0.2])
+            part.move_odom(deltas, [0.1, 0.1, 0.02, 0.01])
 
     def get_selected_state(self,):
         #hago el promedio ponderado de las particulas
@@ -136,24 +140,9 @@ class RobotFunctions:
 
         self.particles = new_particles
 
-    def scan_refererence(self, ranges, range_min, range_max, angle_min, angle_max, angle_increment, last_odom):
+    def scan_refererence(self, ranges, range_min, range_max, angle_min, angle_max,
+                         angle_increment, last_odom, lidar_yaw_offset=0.0):
         tx, ty, theta = last_odom
-        # DIAGNÓSTICO: imprimir el rayo frontal (ángulo ~0°, si es válido)
-        idx0 = 0
-        r0 = np.array(ranges)[idx0]
-        if range_min < r0 < range_max:
-            lx = r0 * np.cos(0)
-            ly = r0 * np.sin(0)
-            # Con +pi
-            gx_pi = tx + lx * np.cos(theta + np.pi) - ly * np.sin(theta + np.pi)
-            gy_pi = ty + lx * np.sin(theta + np.pi) + ly * np.cos(theta + np.pi)
-            # Sin +pi
-            gx = tx + lx * np.cos(theta) - ly * np.sin(theta)
-            gy = ty + lx * np.sin(theta) + ly * np.cos(theta)
-            print(f"Particle=({tx:.2f},{ty:.2f},{np.degrees(theta):.1f}°) "
-                f"Ray0 range={r0:.2f}m → CON+pi=({gx_pi:.2f},{gy_pi:.2f}) "
-                f"SIN+pi=({gx:.2f},{gy:.2f})")
-            
         ranges = np.array(ranges)
         angles = angle_min + np.arange(len(ranges)) * angle_increment
         valid = (ranges > range_min) & (ranges < range_max)
@@ -161,7 +150,13 @@ class RobotFunctions:
         angles = angles[valid]
         local_x = ranges * np.cos(angles)
         local_y = ranges * np.sin(angles)
-        t = theta #+ np.pi
+        # lidar_yaw_offset: montaje del láser respecto de base_link. En la sim
+        # TB3 el frame del scan coincide con la base (0, default); el rplidar
+        # del TB4 real está rotado +90° (tf_static del bag, validado
+        # proyectando los scans reales sobre el mapa: 78% de endpoints en
+        # pared con +90° vs ~23% con 0°/180°). Rotar los puntos locales por
+        # (theta + offset) equivale a corregir el ángulo de cada haz.
+        t = theta + lidar_yaw_offset
         cos_t = np.cos(t)
         sin_t = np.sin(t)
         global_x = tx + local_x * cos_t - local_y * sin_t
