@@ -143,6 +143,74 @@ Todo está en `src/TP_Final_Robotica/TP_Final_Robotica/` y commiteado en la bran
   pese a usarlas todas — completadas. Sacados los placeholders `TODO:`/`tu_nombre`
   de descripción/licencia/maintainer en 5 paquetes.
 
+## Hecho (03/07 — pasajes angostos: fallback de planificación en el robot real)
+
+Probando el robot real: dos obstáculos muy cercanos al inicio quedaban "pegados"
+al inflar las paredes y Theta* no encontraba camino (el robot volvía a WAITING
+aunque físicamente pasaba). Fix en `navegacion_pkg/robot.py` **y**
+`despliegue_pkg/robot.py` (mismo planner):
+
+- [x] **Nuevo `_reopen_narrow_passages`**: sobre el mapa inflado, reabre solo la
+  **línea media** de los pasajes sellados (transformada de distancia euclidiana:
+  celdas libres en el mapa real, con despeje ≥ `NARROW_REOPEN_MIN_CELLS` = 2
+  celdas, que son máximo local de distancia y conectan dos regiones libres
+  distintas — esto último descarta las bisectrices de esquinas, que también son
+  máximos locales, y conserva el margen completo en las esquinas).
+- [x] **Semántica de fallback**: se planifica siempre con el mapa inflado normal;
+  solo si NO existe camino se reintenta con la variante reabierta
+  (`inflated_map_reopened`, calculada en `cb_map`). Motivo: en el mapa de la
+  entrega con r=4 lo único sellado es el **interior de la silla** — con
+  reapertura siempre activa Theta* acortaría camino entre las patas.
+  En `navegacion_pkg` el fallback reabre además *después* de proyectar los
+  obstáculos dinámicos del LIDAR (`_build_planning_map(reopen_narrow=True)`);
+  en `despliegue_pkg` cubre también `_run_planning_around_obstacle`.
+- [x] **Verificado offline**: casos sintéticos (pared recta y esquina en L → 0
+  celdas reabiertas; pasaje de 5 celdas → se reabre centrado; pasaje de 2 celdas
+  impasable → sigue cerrado), smoke test de nodo completo en ambos paquetes
+  (plan normal falla → WARN de fallback → WALKING con camino centrado en el
+  gap) y mapa real de la entrega (r=3: 0 sellados; r=4: solo la silla,
+  componentes libres 3→2). `colcon build` OK.
+  Ajuste en campo: `NARROW_REOPEN_MIN_CELLS` (subir si roza, bajar si no abre).
+  Artifact: https://claude.ai/code/artifact/65dd7819-7294-4f9d-85d6-030e7db06cf4
+
+## Revisión contra la consigna (03/07) — antes del próximo turno de lab
+
+Auditoría completa de A+B+C contra los PDFs oficiales (checklist + bugs, cada
+crítico re-verificado a mano). Informe completo con severidades y evidencia
+`archivo:línea`: https://claude.ai/code/artifact/c994888d-8dcf-4cb9-979a-3cb4fa75592c
+
+**La foto**: las tres partes cumplen la arquitectura pedida; la Parte A está
+completa y entregable. Los bloqueantes del robot real son bugs de cableado chicos:
+
+1. **Offset del LIDAR inconsistente** (afecta B y C — el hallazgo más importante):
+   el PF de `despliegue_pkg` proyecta el scan con **+180°**
+   (`particle_filter.py:147`), el de `navegacion_pkg` con **0°** (`:164`, el `+π`
+   quedó comentado tras un debug), el cono frontal de obstáculos de ambos
+   `robot.py` asume **0°**, y solo `detector_cono_node.py` aplica el **+90°**
+   validado (extrínseca real: `slam_pkg/occupancy_grid.py:304`). A lo sumo una
+   convención es correcta → PF que no converge en el robot real + obstáculos
+   frontales invisibles. Resolver con un experimento contra el bag
+   (proyectar scan con 0/90/180 sobre el mapa) y unificar.
+2. **Fixes de una línea**: `sigma 5.0→0.35` en `despliegue_pkg/likelihood_field.py:33`;
+   `map_publisher` de ambos paquetes convierte "desconocido" (205) en libre
+   (en el mapa real es el 97% del grid) → mapear 205→-1; en la sim de B nadie
+   publica `/calc_odom` en `custom_casa*/` (nodo comentado) → remap a `/odom`;
+   la FSM no frena al degradarse la localización (falta `Twist()` antes del
+   `return`); umbral de obstáculo 0.15 m ≤ radio del TB4 (~0.17) → subir a ~0.25.
+3. **TF map→odom mal compuesto en B y C**: publica la pose del robot en vez de
+   `T_map_base·(T_odom_base)⁻¹` + `child_frame_id` sin namespace `tb4_0/`.
+4. **Entrega (reprueban por sí solos)**: falta el **informe técnico PDF**
+   (con diagrama de bloques de la FSM y apartado sim-to-real de C) y las
+   **diapositivas** de la defensa (sin material visual no dejan exponer).
+   Detalle B: la localización online es LIDAR-only (Sistema 1 de facto) —
+   justificarlo en el informe. Detalle C: `cono_detector_pkg` anidado no se
+   compila con un `colcon build` pelado — resolver para el zip de entrega.
+
+Parte A (hallazgos menores, no bloquean): piso de bearing 0.5° optimista vs
+asociación por keyframe (`graph_slam.py:412`), CSVs en modo append (mezcla
+corridas al re-correr percepción), header de `scans.csv` asume haces constantes,
+y falta TF map→odom + display de odom en `slam.rviz` para la demo en vivo.
+
 ## Pendiente
 - [ ] **Nitidez final (opcional, agregado grande)**: para el salto final de paredes
   finas haría falta meter edges de **scan-matching dentro del GraphSLAM** (no solo en la

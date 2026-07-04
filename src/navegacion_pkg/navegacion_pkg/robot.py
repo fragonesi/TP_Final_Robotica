@@ -7,7 +7,7 @@ import heapq
 import math
 import numpy as np
 import copy
-from scipy.ndimage import binary_dilation
+from scipy.ndimage import binary_dilation, distance_transform_edt, label
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, QoSDurabilityPolicy, QoSReliabilityPolicy
@@ -73,7 +73,16 @@ class RobotNavigator(Node):
 
         # --- Inflar el mapa ---
         self.inflated_map: OccupancyGrid | None = None
-        self.INFLATION_RADIUS_CELLS = 4  # 3 celdas × 0.05 m = 0.15 m de margen
+        self.INFLATION_RADIUS_CELLS = 4  # 4 celdas × 0.05 m = 0.20 m de margen
+        # Pasajes angostos: dos obstáculos a menos de 2×INFLATION_RADIUS
+        # quedan sellados al inflar aunque el robot pase físicamente. En
+        # inflated_map_reopened la línea media de esos pasajes está reabierta
+        # (si el despeje real es >= NARROW_REOPEN_MIN_CELLS); se usa SOLO como
+        # fallback cuando la planificación normal no encuentra camino.
+        # Si el robot roza al cruzar un pasaje, subir el radio; si un pasaje
+        # transitable sigue cerrado, bajarlo (mín 1).
+        self.inflated_map_reopened: OccupancyGrid | None = None
+        self.NARROW_REOPEN_MIN_CELLS = 2  # 2 celdas × 0.05 m = 0.10 m por lado
 
         # --- Pure Pursuit ---
         self.LOOKAHEAD_DISTANCE = 0.2   # metros
@@ -137,6 +146,10 @@ class RobotNavigator(Node):
     def cb_map(self, msg: OccupancyGrid):
         self.map = msg
         self.inflated_map = self._inflate_map(msg)
+        # Variante de fallback con los pasajes angostos reabiertos (ver
+        # run_planning): misma inflación, pero la línea media de los pasajes
+        # que quedaron sellados vuelve a ser transitable.
+        self.inflated_map_reopened = self._inflate_map(msg, reopen_narrow=True)
         self.get_logger().info('Mapa recibido e inflado.')
 
     # def cb_pose(self, msg: PoseWithCovarianceStamped):
@@ -324,6 +337,22 @@ class RobotNavigator(Node):
         self.pub_planning_map.publish(planning_map)
 
         path = self._run_theta_star(self.current_pose, self.goal_pose, planning_map, self.map)
+
+        # Fallback: si la inflación (de paredes u obstáculos dinámicos) selló
+        # el único pasaje hacia el goal (dos obstáculos muy cercanos),
+        # reintentar con la línea media de esos pasajes reabierta. Solo se
+        # llega acá si NO existe ningún camino con el margen completo.
+        if not path and self.inflated_map_reopened is not None:
+            self.get_logger().warn(
+                'Sin camino en el mapa inflado: reintento con pasajes '
+                'angostos reabiertos (margen reducido al cruzarlos).')
+            planning_map = self._build_planning_map(reopen_narrow=True)
+            planning_map.header.stamp = self.get_clock().now().to_msg()
+            if not planning_map.header.frame_id:
+                planning_map.header.frame_id = 'map'
+            self.pub_planning_map.publish(planning_map)
+            path = self._run_theta_star(self.current_pose, self.goal_pose,
+                                        planning_map, self.map)
 
         if path:
             self.planned_path = path
@@ -532,7 +561,7 @@ class RobotNavigator(Node):
 
         return False
 
-    def _build_planning_map(self) -> OccupancyGrid:
+    def _build_planning_map(self, reopen_narrow: bool = False) -> OccupancyGrid:
         """
         Devuelve una copia del mapa estático inflado con los obstáculos
         dinámicos (detectados por el láser y no presentes en el mapa)
@@ -540,9 +569,17 @@ class RobotNavigator(Node):
 
         No tiene memoria: se reconstruye desde cero en cada replaneo, así
         que un obstáculo que se movió deja de bloquear en el próximo plan.
+
+        Con ``reopen_narrow=True`` construye la variante de fallback: parte
+        del mapa estático con pasajes reabiertos y, como los obstáculos
+        dinámicos inflados también pueden sellar un pasaje, vuelve a reabrir
+        la línea media después de proyectarlos.
         """
         # Partimos siempre del mapa estático inflado (nunca se muta).
-        planning = copy.deepcopy(self.inflated_map)
+        if reopen_narrow and self.inflated_map_reopened is not None:
+            planning = copy.deepcopy(self.inflated_map_reopened)
+        else:
+            planning = copy.deepcopy(self.inflated_map)
 
         if self.last_scan is None or self.current_pose is None:
             return planning
@@ -593,6 +630,20 @@ class RobotNavigator(Node):
 
         # Marcar como ocupado sólo lo que hoy es libre (no tocar desconocido)
         data[dilated & (data == 0)] = 100
+
+        # Fallback: los obstáculos dinámicos inflados también pueden sellar
+        # un pasaje (p.ej. contra una pared). Reabrir la línea media contra
+        # el mapa real + los impactos dinámicos sin inflar.
+        if reopen_narrow:
+            raw_dyn = np.array(self.map.data,
+                               dtype=np.int8).reshape((height, width))
+            raw_dyn[dynamic_cells] = 100
+            reopened = self._reopen_narrow_passages(raw_dyn, data)
+            if reopened:
+                self.get_logger().info(
+                    f'{reopened} celdas reabiertas en pasajes angostos '
+                    f'del mapa de planificación.')
+
         planning.data = data.flatten().tolist()
 
         self.get_logger().info(
@@ -1199,17 +1250,22 @@ class RobotNavigator(Node):
                 f'Robot detenido hasta re-converger.')
         return degraded
     
-    def _inflate_map(self, grid: OccupancyGrid) -> OccupancyGrid:
+    def _inflate_map(self, grid: OccupancyGrid,
+                     reopen_narrow: bool = False) -> OccupancyGrid:
         """
         Expande cada celda ocupada del mapa por un radio de INFLATION_RADIUS_CELLS celdas usando una máscara circular (distancia euclidiana).
- 
+
         Celdas del OccupancyGrid:
           -1  → desconocido  (no se toca)
            0  → libre
          100  → ocupado
- 
+
         Todas las celdas dentro del radio de una celda ocupada
         pasan a valer 100 (excepto las desconocidas).
+
+        Con ``reopen_narrow=True`` devuelve la variante de fallback: la
+        línea media de los pasajes que la inflación selló queda transitable
+        (ver _reopen_narrow_passages).
         """
 
         r = self.INFLATION_RADIUS_CELLS # radio por el cual inflo
@@ -1233,6 +1289,12 @@ class RobotNavigator(Node):
         inflated_raw = raw.copy()
         inflate_mask = dilated & (raw == 0) # libre ahora pasa a ocupado
         inflated_raw[inflate_mask] = 100
+
+        # Solo para la variante de fallback: reabrir la línea media de los
+        # pasajes angostos que la inflación haya sellado.
+        reopened = 0
+        if reopen_narrow:
+            reopened = self._reopen_narrow_passages(raw, inflated_raw)
  
         # Reconstruir el OccupancyGrid con los mismos metadatos:
         inflated_grid = copy.deepcopy(grid)
@@ -1240,9 +1302,83 @@ class RobotNavigator(Node):
  
         self.get_logger().info(
             f'Mapa inflado: {int(inflate_mask.sum())} celdas nuevas bloqueadas '
-            f'(radio={r} celdas = {r * grid.info.resolution:.2f} m).'
+            f'(radio={r} celdas = {r * grid.info.resolution:.2f} m); '
+            f'{reopened} celdas reabiertas en pasajes angostos.'
         )
         return inflated_grid
+
+    def _reopen_narrow_passages(self, raw: np.ndarray,
+                                inflated_raw: np.ndarray) -> int:
+        """
+        Reabre la línea media de los pasajes que la inflación selló.
+
+        Dos obstáculos separados por menos de 2×INFLATION_RADIUS quedan
+        "pegados" al inflar y Theta* no encuentra camino, aunque el robot
+        entre físicamente (las paredes del mapa además están engordadas por
+        el blur del SLAM). Bajar la inflación global no sirve: el camino
+        abrazaría TODAS las esquinas al radio reducido. En cambio se reabren
+        solo las celdas selladas que cumplen:
+
+          1. eran libres en el mapa real (la inflación las tapó), y
+          2. tienen despeje real >= NARROW_REOPEN_MIN_CELLS (transformada de
+             distancia euclidiana al obstáculo real más cercano), y
+          3. son cresta del pasaje: máximo local de esa distancia a lo largo
+             de algún eje (la línea media entre los dos obstáculos), y
+          4. conectan dos regiones libres DISTINTAS del mapa inflado. Esto
+             descarta la bisectriz de las esquinas cóncavas (también es
+             máximo local de la distancia — eje medial — pero une una región
+             consigo misma): en las esquinas se conserva el margen completo.
+
+        El camino resultante cruza el pasaje centrado, con el máximo despeje
+        físicamente posible. Modifica ``inflated_raw`` in place y devuelve
+        la cantidad de celdas reabiertas.
+        """
+        r_min = self.NARROW_REOPEN_MIN_CELLS
+        occupied = (raw == 100)
+        if not occupied.any():
+            return 0
+
+        # Distancia (en celdas) de cada celda al obstáculo real más cercano
+        edt = distance_transform_edt(~occupied)
+
+        # Celdas selladas por la inflación con despeje real suficiente
+        sealed = (inflated_raw == 100) & (raw == 0) & (edt >= r_min)
+        if not sealed.any():
+            return 0
+
+        # Cresta: máximo local de edt según algún eje (H, V o diagonales).
+        # El test asimétrico (> de un lado, >= del otro) evita marcar las
+        # bandas de distancia constante paralelas a una pared recta, pero sí
+        # captura el centro de un pasaje de ancho par (empate en el medio).
+        ridge = np.zeros_like(sealed)
+        for dr, dc in ((0, 1), (1, 0), (1, 1), (1, -1)):
+            n_prev = np.roll(np.roll(edt, dr, axis=0), dc, axis=1)
+            n_next = np.roll(np.roll(edt, -dr, axis=0), -dc, axis=1)
+            ridge |= (edt > n_prev) & (edt >= n_next)
+
+        # Engordar la cresta 1 celda (sin salir de lo sellado) para que
+        # quede 8-conexa y la línea de visión de Theta* pueda atravesarla.
+        ridge = binary_dilation(ridge & sealed) & sealed
+        if not ridge.any():
+            return 0
+
+        # Requisito 4: quedarse solo con los grupos de cresta que unen dos
+        # componentes libres distintas del mapa inflado. La bisectriz de una
+        # esquina cóncava toca una sola componente y se descarta.
+        eight = np.ones((3, 3), dtype=bool)
+        free_labels, _ = label(inflated_raw == 0, structure=eight)
+        ridge_groups, n_groups = label(ridge, structure=eight)
+        reopened = 0
+        for i in range(1, n_groups + 1):
+            group = (ridge_groups == i)
+            # Componentes libres adyacentes al grupo (halo de 1 celda)
+            halo = binary_dilation(group) & (inflated_raw == 0)
+            touched = np.unique(free_labels[halo])
+            touched = touched[touched != 0]
+            if touched.size >= 2:
+                inflated_raw[group] = 0
+                reopened += int(group.sum())
+        return reopened
 
     def _stop_robot(self):
         self.pub_cmd_vel.publish(Twist()) # Twist vacío = stop
