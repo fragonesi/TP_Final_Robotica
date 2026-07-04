@@ -19,17 +19,11 @@ Cambios respecto a Parte B:
 import math
 import rclpy
 from enum import Enum, auto
-
 from geometry_msgs.msg import PointStamped, PoseStamped, Twist
 from rclpy.qos import QoSProfile, QoSDurabilityPolicy, ReliabilityPolicy
 from sensor_msgs.msg import LaserScan
-
 from .robot import RobotNavigator, State
 
-
-# ---------------------------------------------------------------------------
-# Estados extendidos
-# ---------------------------------------------------------------------------
 
 class StateC(Enum):
     WAITING       = auto()
@@ -41,15 +35,7 @@ class StateC(Enum):
     ALIGNING      = auto()
 
 
-# ---------------------------------------------------------------------------
-# Nodo Parte C
-# ---------------------------------------------------------------------------
-
 class RobotNavigatorC(RobotNavigator):
-
-    # -----------------------------------------------------------------------
-    # Inicialización
-    # -----------------------------------------------------------------------
 
     def __init__(self):
         super().__init__()
@@ -79,6 +65,9 @@ class RobotNavigatorC(RobotNavigator):
         self.timer_c = self.create_timer(0.1, self.state_machine_loop_c)
 
     def _remap_topics_for_tb4(self):
+        """
+        Remaps the topics to /tb4_0/* for the real TurtleBot4, and sets QoS for LaserScan.
+        """
         qos_be = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT)
 
         self.destroy_subscription(self.sub_scan)
@@ -93,11 +82,11 @@ class RobotNavigatorC(RobotNavigator):
 
         self.get_logger().info('Topics remapeados a /tb4_0/*')
 
-    # -----------------------------------------------------------------------
-    # Callbacks nuevos
-    # -----------------------------------------------------------------------
-
     def cb_cono(self, msg: PointStamped):
+        """
+        Callback function for the /tb4_0/cono_detectado topic. 
+        It stores the detected cone point and transitions to CONE_DETECTED state if appropriate.
+        """
         if self.state_c not in (StateC.EXPLORING, StateC.WAITING):
             return
         self.cone_point = msg
@@ -106,11 +95,11 @@ class RobotNavigatorC(RobotNavigator):
             f'x={msg.point.x:.2f} y={msg.point.y:.2f}')
         self._transition_c(StateC.CONE_DETECTED)
 
-    # -----------------------------------------------------------------------
-    # Loop principal extendido
-    # -----------------------------------------------------------------------
-
     def state_machine_loop_c(self):
+        """
+        Main loop for the extended state machine (FSM-C). 
+        It checks localization and executes the appropriate state handler based on the current state.
+        """
         if not self._localization_ok():
             self.get_logger().warn(
                 'Localización no confiable. Robot detenido.',
@@ -125,7 +114,7 @@ class RobotNavigatorC(RobotNavigator):
             case StateC.CONE_DETECTED:
                 self._run_cone_detected()
             case StateC.PLANNING:
-                self.new_goal_received = False  # evita re-trigger del loop WALKING→PLANNING
+                self.new_goal_received = False
                 self.run_planning()
                 self._sync_state_c_from_b()
             case StateC.WALKING:
@@ -136,19 +125,18 @@ class RobotNavigatorC(RobotNavigator):
             case StateC.ALIGNING:
                 self._run_aligning_c()
 
-    # -----------------------------------------------------------------------
-    # Implementación de cada estado
-    # -----------------------------------------------------------------------
-
     def _run_waiting_c(self):
+        """
+        Waits for localization to converge. Once converged, transitions to EXPLORING state.
+        """
         if self._check_localization_converged('waiting_c'):
             self.get_logger().info('Localización lista. Iniciando exploración.')
             self._transition_c(StateC.EXPLORING)
 
     def _run_exploring(self):
         """
-        Navegación reactiva: avanza hasta detectar un obstáculo, elige el
-        lado más despejado y gira. cb_cono dispara la transición a CONE_DETECTED.
+        Reactive navigation to explore the maze and look for red cones. 
+        If the front is clear, it moves forward; otherwise, it turns to avoid obstacles.
         """
         if self.last_scan is None:
             return
@@ -172,8 +160,8 @@ class RobotNavigatorC(RobotNavigator):
 
     def _run_cone_detected(self):
         """
-        Convierte la posición del cono al frame del mapa y setea el goal
-        a CONE_GOAL_OFFSET metros antes del cono (espacio libre, no la pared).
+        Converts the detected cone position from the robot frame to the map frame and sets the goal
+        to be CONE_GOAL_OFFSET meters before the cone (in free space, not at the wall).
         """
         if self.cone_point is None or self.current_pose is None:
             self.get_logger().warn('CONE_DETECTED: faltan datos, volviendo a explorar.')
@@ -194,7 +182,6 @@ class RobotNavigatorC(RobotNavigator):
             cx_adj = cx * factor
             cy_adj = cy * factor
         else:
-            # Ya estamos muy cerca — no moverse
             cx_adj, cy_adj = 0.0, 0.0
 
         # Rotar al frame del mapa
@@ -212,16 +199,16 @@ class RobotNavigatorC(RobotNavigator):
         goal.pose.position.y = cone_map_y
         goal.pose.orientation.w = 1.0
 
-        self.goal_pose         = goal
-        self.cone_goal         = goal
-        self.new_goal_received = False   # lo manejamos nosotros, no cb_goal
-        self.state             = State.PLANNING
+        self.goal_pose = goal
+        self.cone_goal = goal
+        self.new_goal_received = False
+        self.state = State.PLANNING
         self._transition_c(StateC.PLANNING)
 
     def _run_walking_c(self):
         """
-        Igual que run_walking de Parte B. Sin APPROACHING_CONE — el planificador
-        lleva al robot hasta el goal offset, ALIGNING cierra la maniobra.
+        Walking towards the goal. If a new goal is received, an obstacle is detected, or the goal is reached,
+        it transitions to the appropriate state.
         """
         if self.new_goal_received:
             self.new_goal_received = False
@@ -246,7 +233,10 @@ class RobotNavigatorC(RobotNavigator):
         self.pub_cmd_vel.publish(cmd)
 
     def _run_aligning_c(self):
-        """Alineación final. Al terminar vuelve a EXPLORING."""
+        """
+        Final alignment to the goal orientation after reaching the goal position. 
+        Once aligned, it stops the robot and transitions back to EXPLORING state.
+        """
         self.state = State.ALIGNING
         done = self._align_to_goal_angle()
         if done:
@@ -256,11 +246,11 @@ class RobotNavigatorC(RobotNavigator):
             self.get_logger().info('Cono alcanzado. Volviendo a explorar.')
             self._transition_c(StateC.EXPLORING)
 
-    # -----------------------------------------------------------------------
-    # Helpers
-    # -----------------------------------------------------------------------
-
     def _explore_front_clear(self) -> bool:
+        """
+        Checks if the front of the robot is clear of obstacles within the EXPLORE_CONE_HALF_ANGLE and EXPLORE_OBSTACLE_DIST.
+        Returns True if clear, False if an obstacle is detected.
+        """
         msg = self.last_scan
         if msg is None:
             return True
@@ -276,10 +266,16 @@ class RobotNavigatorC(RobotNavigator):
         return True
 
     def _transition_c(self, new_state: StateC):
+        """
+        Transitions to a new state in the extended FSM-C and logs the transition.
+        """
         self.get_logger().info(f'[FSM-C] {self.state_c.name} → {new_state.name}')
         self.state_c = new_state
 
     def _sync_state_c_from_b(self):
+        """
+        Synchronizes the extended FSM-C state with the base FSM-B state.
+        """
         mapping = {
             State.WAITING:  StateC.WAITING,
             State.PLANNING: StateC.PLANNING,
@@ -293,6 +289,9 @@ class RobotNavigatorC(RobotNavigator):
                 self._transition_c(target)
 
     def run_planning(self):
+        """
+        Runs the planning logic for the extended FSM-C.
+        """
         super().run_planning()
         if self.state == State.WALKING and self.state_c == StateC.PLANNING:
             self._transition_c(StateC.WALKING)
@@ -300,9 +299,7 @@ class RobotNavigatorC(RobotNavigator):
             self.cone_goal  = None
             self.cone_point = None
             self._transition_c(StateC.EXPLORING)
-
-
-# ---------------------------------------------------------------------------
+            
 
 def main(args=None):
     rclpy.init(args=args)
