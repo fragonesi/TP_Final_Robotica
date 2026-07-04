@@ -25,13 +25,26 @@ def _logodds(p):
 
 class OccupancyGridMap:
     def __init__(self, resolution=0.05, origin=(0.0, 0.0), size=(200, 200),
-                 p_occ=0.85, p_free=0.35, clamp=5.0):
+                 p_occ=0.7, p_free=0.4, clamp=50.0):
         """resolution [m/celda], origin = esquina inferior-izquierda [m],
-        size = (ancho, alto) en celdas. p_occ/p_free: prob. inversa del sensor."""
+        size = (ancho, alto) en celdas. p_occ/p_free: prob. inversa del sensor.
+
+        clamp: el clip se aplica en CADA update (no solo al final), así que un
+        clamp chico satura el log-odds después de muy pocos eventos consecutivos
+        del mismo signo (con los p_occ/p_free por defecto, l_occ≈0.85 y
+        l_free≈-0.41: clamp=5 satura a los ~6 hits o ~12 pasadas-libres). En una
+        celda vista miles de veces a lo largo de varios lazos (loop closure), eso
+        vuelve el resultado dependiente del ORDEN reciente de eventos en vez de
+        la mayoría histórica: una celda de pared con miles de hits terminaba
+        marcada libre solo porque las últimas ~12 pasadas antes de terminar el
+        recorrido fueron rayos que la atravesaban sin impactar. Con clamp=50
+        (verificado contra los datos reales del laberinto) las paredes internas,
+        invisibles antes pese a tener miles de impactos crudos, se recuperan."""
         self.res = float(resolution)
         self.ox, self.oy = float(origin[0]), float(origin[1])
         self.w, self.h = int(size[0]), int(size[1])
         self.l = np.zeros((self.h, self.w))          # log-odds [row=y, col=x]
+        self.hits = np.zeros((self.h, self.w), dtype=np.int32)  # impactos crudos por celda
         self.l_occ = _logodds(p_occ)
         self.l_free = _logodds(p_free)
         self.clamp = float(clamp)
@@ -112,26 +125,58 @@ class OccupancyGridMap:
             if hit and self._in_bounds(c1, r1):              # celda del impacto
                 self.l[r1, c1] = np.clip(self.l[r1, c1] + self.l_occ,
                                          -self.clamp, self.clamp)
+                self.hits[r1, c1] += 1
 
     # -- salidas ------------------------------------------------------------- #
     def prob(self):
         """Mapa de probabilidad de ocupación [0,1]."""
         return 1.0 - 1.0 / (1.0 + np.exp(self.l))
 
-    def to_occupancy(self, occ_thresh=0.65, free_thresh=0.25):
+    @staticmethod
+    def _dilate(mask, rad):
+        """Dilatación binaria con elemento cuadrado (2·rad+1), numpy puro."""
+        out = mask.copy()
+        h, w = mask.shape
+        for dr in range(-rad, rad + 1):
+            for dc in range(-rad, rad + 1):
+                if dr == 0 and dc == 0:
+                    continue
+                sr0, sr1 = max(0, dr), min(h, h + dr)
+                tr0, tr1 = max(0, -dr), min(h, h - dr)
+                sc0, sc1 = max(0, dc), min(w, w + dc)
+                tc0, tc1 = max(0, -dc), min(w, w - dc)
+                out[tr0:tr1, tc0:tc1] |= mask[sr0:sr1, sc0:sc1]
+        return out
+
+    def _occ_mask(self, occ_thresh, min_hits_occ=None, hits_iso_rad=2):
+        """Celdas ocupadas: por consenso log-odds y, opcionalmente, por evidencia
+        absoluta de impactos. min_hits_occ rescata los obstáculos FINOS (patas de
+        silla, paneles/paredes delgadas): una celda con cientos de retornos láser
+        contiene algo real aunque la mayoría de los rayos la atraviese sin impactar
+        (el log-odds la marca libre porque el objeto no llena la celda). Para no
+        engrosar las paredes ya consensuadas con su halo de impactos, el override
+        solo aplica a celdas a más de hits_iso_rad celdas de un ocupado por
+        consenso. None = solo consenso."""
+        occ = self.prob() >= occ_thresh
+        if min_hits_occ is not None:
+            iso = ~self._dilate(occ, hits_iso_rad)
+            occ |= (self.hits >= int(min_hits_occ)) & iso
+        return occ
+
+    def to_occupancy(self, occ_thresh=0.65, free_thresh=0.25, min_hits_occ=None):
         """Grilla estilo nav_msgs/OccupancyGrid: 0=libre, 100=ocupado, -1=desconocido."""
         p = self.prob()
         grid = np.full(p.shape, -1, dtype=np.int8)
-        grid[p >= occ_thresh] = 100
         grid[p <= free_thresh] = 0
+        grid[self._occ_mask(occ_thresh, min_hits_occ)] = 100
         return grid
 
-    def export_ros_map(self, prefix, occ_thresh=0.65, free_thresh=0.25):
+    def export_ros_map(self, prefix, occ_thresh=0.65, free_thresh=0.25, min_hits_occ=None):
         """Escribe <prefix>.pgm + <prefix>.yaml (formato map_server de ROS)."""
         p = self.prob()
         img = np.full(p.shape, 205, dtype=np.uint8)   # desconocido (gris)
         img[p <= free_thresh] = 254                    # libre (blanco)
-        img[p >= occ_thresh] = 0                       # ocupado (negro)
+        img[self._occ_mask(occ_thresh, min_hits_occ)] = 0   # ocupado (negro)
         img = np.flipud(img)                           # PGM: fila 0 arriba
         with open(prefix + '.pgm', 'wb') as f:
             f.write(b'P5\n%d %d\n255\n' % (self.w, self.h))
@@ -259,7 +304,7 @@ def build_grid_from_scans(poses, pose_times, scans_csv, resolution=0.05, max_sca
                           laser_offset=(-0.04, 0.0, np.pi / 2),
                           range_cap=5.0, intensity_min=0.0,
                           scan_match=False, sm_passes=2, sm_iters=6, sm_blur0=3.0,
-                          progress_dir=None, progress_every=0, max_scan_idx=0):
+                          p_occ=0.7, p_free=0.4, clamp=50.0):
     """Proyecta los barridos del LIDAR sobre la trayectoria corregida y devuelve la
     grilla. scans_csv: salida de scan_logger_node. Submuestrea a <= max_scans para
     acotar el costo (más barridos → paredes mejor consensuadas, menos borrón).
@@ -277,7 +322,18 @@ def build_grid_from_scans(poses, pose_times, scans_csv, resolution=0.05, max_sca
 
     scan_match: si True, refina la pose de cada barrido por scan-matching contra el
     mapa (Gauss-Newton sobre un likelihood field), en sm_passes pasadas coarse-to-fine
-    (blur decreciente). Corrige el jitter de pose → paredes más finas. Requiere pandas/scipy."""
+    (blur decreciente). Corrige el jitter de pose → paredes más finas. Requiere pandas/scipy.
+
+    p_occ/p_free: modelo inverso del sensor. Con los defaults (0.7/0.4) un impacto
+    compensa ~2 pasadas de rayo; los obstáculos FINOS (patas de silla: ~2 cm en celdas
+    de 5 cm) reciben muchas más pasadas que impactos y el consenso los borra. Para que
+    sobrevivan, subir p_occ / acercar p_free a 0.5 (p.ej. 0.75/0.45).
+
+    clamp: ver OccupancyGridMap — un clamp chico (el viejo default, 5) hace que el
+    log-odds de una celda vista miles de veces (típico en un laberinto con varios
+    lazos) dependa del orden reciente de hits/pasadas-libres en vez de la mayoría
+    histórica, y puede borrar paredes internas enteras pese a tener miles de
+    impactos reales. Ver TpParteA.md (03/07)."""
     import pandas as pd
     df = pd.read_csv(scans_csv)
     step = max(1, len(df) // max_scans)
@@ -289,7 +345,8 @@ def build_grid_from_scans(poses, pose_times, scans_csv, resolution=0.05, max_sca
     range_max = float(df['range_max'].iloc[0])
     eff_max = range_max if range_cap is None else min(range_max, range_cap)
 
-    grid = OccupancyGridMap.auto(poses[:, :2], range_max=range_max, resolution=resolution)
+    grid = OccupancyGridMap.auto(poses[:, :2], range_max=range_max, resolution=resolution,
+                                 p_occ=p_occ, p_free=p_free, clamp=clamp)
     ldx, ldy, ldyaw = laser_offset
     n = len(rcols)
 
@@ -305,15 +362,6 @@ def build_grid_from_scans(poses, pose_times, scans_csv, resolution=0.05, max_sca
         if intens is not None:
             valid &= intens > intensity_min
         recs.append((pose, angles, ranges, intens, valid))
-
-    # Recorte opcional: quedarse solo con los primeros max_scan_idx barridos. Se aplica
-    # ANTES del scan-matching y la integración, así todo el mapa (incluidas las paredes
-    # consensuadas) se construye únicamente con esa porción. El índice coincide con el del
-    # título de los PNG de progreso ('barrido k/N').
-    if max_scan_idx and max_scan_idx > 0 and max_scan_idx < len(recs):
-        print(f"[recorte] usando solo los primeros {max_scan_idx} de {len(recs)} barridos "
-              f"(se descartan los últimos {len(recs) - max_scan_idx})")
-        recs = recs[:max_scan_idx]
 
     sm_poses = [rec[0] for rec in recs]
     if scan_match:
@@ -339,32 +387,11 @@ def build_grid_from_scans(poses, pose_times, scans_csv, resolution=0.05, max_sca
                                                  laser_offset, iters=sm_iters))
             sm_poses = new_poses
 
-    # Visualización incremental: guardar PNGs de progreso si se pidió.
-    save_progress = progress_dir is not None and progress_every and progress_every > 0
-    if save_progress:
-        import os
-        import matplotlib
-        matplotlib.use('Agg')
-        import matplotlib.pyplot as plt
-        os.makedirs(progress_dir, exist_ok=True)
-        snap = 0
-        total = len(recs)
-        print(f"[progreso] guardando un PNG cada {progress_every} barridos en {progress_dir}/")
-
     # Integración final (Bresenham, con todos los filtros) en las poses refinadas.
-    for k, ((pose, angles, ranges, intens, valid), pse) in enumerate(zip(recs, sm_poses), start=1):
+    for (pose, angles, ranges, intens, valid), pse in zip(recs, sm_poses):
         grid.integrate_scan(pse, angles, ranges, range_max,
                             laser_offset=laser_offset, intensities=intens,
                             intensity_min=intensity_min, range_cap=range_cap)
-        if save_progress and (k % progress_every == 0 or k == total):
-            snap += 1
-            fig, ax = plt.subplots(figsize=(8, 8))
-            ax.imshow(grid.prob(), origin='lower', cmap='gray_r', vmin=0.0, vmax=1.0)
-            ax.set_title(f'Construcción del mapa — barrido {k}/{total}')
-            ppath = os.path.join(progress_dir, f'mapa_progreso_{snap:04d}.png')
-            fig.savefig(ppath, dpi=110, bbox_inches='tight')
-            plt.close(fig)
-            print(f"[progreso] {ppath}  ({k}/{total} barridos)")
     return grid
 
 

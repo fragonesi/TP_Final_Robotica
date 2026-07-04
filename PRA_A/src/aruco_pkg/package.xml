@@ -4,7 +4,7 @@
   <name>aruco_pkg</name>
   <version>0.0.1</version>
   <description>Detección y estimación de pose de ArUco Tags - TP Final Parte A (Opción 3)</description>
-  <maintainer email="tu_email@example.com">tu_nombre</maintainer>
+  <maintainer email="Elianaostro@gmail.com">eliana</maintainer>
   <license>Apache-2.0</license>
 
   <exec_depend>rclpy</exec_depend>

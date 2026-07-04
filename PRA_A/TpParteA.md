@@ -199,3 +199,63 @@ solución sin tocar el grafo: refinar la pose de **cada barrido** para que sus i
 **Lo que todavía falta**: enchufar el `NoiseModel` ajustado en el grafo (hoy usa std por
 defecto) y, si se quisiera el salto final de nitidez, edges de scan-matching **dentro**
 del GraphSLAM (no solo en la 2da pasada).
+
+**Rescate de obstáculos finos — la silla invisible (02/07)** — en el mapa de la
+corrida nueva (`rosbag2_2026_07_01-12_45_54`, 46,8 min) faltaba la silla que está
+junto al pouf. Diagnóstico con un mapa de *solo impactos* (sin la parte de liberar
+celdas): las 4 patas están clarísimas en los datos (~1.000 retornos cada una), pero
+una pata de ~2 cm no llena la celda de 5 cm — por cada rayo que impacta hay ~7 que
+atraviesan la celda hacia paredes más lejanas y la "liberan". Con los pesos del
+log-odds (`p_occ=0.7`/`p_free=0.4`, cociente 2:1) el consenso las borra. Se probó:
+rebalancear pesos (hasta 0.8/0.48, cociente 17) → insuficiente; resolución 2,5 cm →
+tampoco (el jitter de pose dispersa los impactos). La solución que funcionó:
+**override por evidencia absoluta** — celdas con ≥N impactos crudos (`--min-hits-occ`,
+escalar con `--max-scans`; usamos 500 con los 19.926 scans) y a >2 celdas de una
+pared consensuada (para no engrosar el halo de las paredes) se exportan ocupadas.
+Con scan-matching activo rescata solo 30 celdas: las 4 patas + tramos de paredes
+finas que sufrían el mismo efecto. Ocupadas 2.131 → 2.227; las paredes no se
+engrosan. También quedaron expuestos `--p-occ`/`--p-free` en el pipeline.
+
+**El bug grande: paredes internas del laberinto invisibles (03/07)** — mirando de
+cerca `entrega_parte_A/mapa.pgm` (el de la corrida larga, 46,8 min) algo no cerraba:
+se veía perfecto el perímetro exterior del laberinto, pero el interior era casi todo
+libre, con apenas un puñadito de marcas sueltas. `trayectoria.png` muestra un
+recorrido lleno de giros y lazos — no hay forma de que eso pase si adentro no hay
+paredes separando pasillos. Esto es distinto (y peor) que el "borroneo" de las
+entradas anteriores: acá directamente **faltaba la estructura**, no que estuviera sucia.
+
+Primer sospechoso: pensé que el LIDAR simplemente no estaba viendo bien esas paredes
+(¿ángulo rasante? ¿material poco reflectante?). Para chequear armé un mapa de **solo
+impactos crudos** (`grid.hits`, sin nada de log-odds ni libre/ocupado) sobre los datos
+reales de `Rosbags/corrida2_run/`. Sorpresa: ese mapa de impactos crudos muestra el
+laberinto COMPLETO, corredores, cruces, el loop del medio, todo clarísimo — con
+celdas de hasta **7.784 impactos**. O sea, el LIDAR sí las ve, y mucho. El problema
+está en cómo esos impactos se convierten en "ocupado".
+
+Ahí fui directo a mirar `OccupancyGridMap.integrate_scan`: cada
+actualización de una celda hace `l = clip(l + l_occ_o_l_free, -clamp, clamp)` (según
+si la celda fue impacto o pasada-libre), con `clamp=5.0` puesto de entrada (típico de
+Probabilistic Robotics, pero ahí asume pocas observaciones por celda). Con `p_occ=0.7`/`p_free=0.4` eso da `l_occ≈0.85`,
+`l_free≈-0.41` — o sea, **6 impactos seguidos** ya saturan una celda a "ocupado", y
+**12 pasadas-libres seguidas** la saturan a "libre". El problema: en un laberinto
+recorrido en un montón de lazos (loop closure, 46 min, múltiples vueltas), una celda
+de pared se ve MILES de veces a lo largo de la corrida, mezclando impactos directos
+con pasadas-libres de rayos que van hacia otro lado. Con el clip aplicado en CADA
+paso (no solo al final), el log-odds deja de "acumular la mayoría histórica" y pasa a
+reflejar solo el **orden reciente** de los últimos ~6-12 eventos antes de que el robot
+se fuera de esa zona. Comprobado directo en los datos: la celda de 7.784 impactos
+tenía `l=-5.0` (saturada "libre" del todo) — bastaron unas pocas pasadas-libres al
+final para tirar por la borda miles de impactos reales.
+
+Probé subir `clamp` a 30, 100 y 1000 sobre los mismos datos cacheados (mismo
+scan-matching, no hace falta repetirlo — es carísimo). Con 30 casi no cambia nada
+todavía (el margen sigue siendo chico comparado con miles de eventos). A partir de
+**50** el interior del laberinto aparece completo y coincide con el mapa de impactos
+crudos; 100 y 1000 no agregan nada más. Así que `clamp=50` (nuevo default de
+`OccupancyGridMap`, expuesto como `--clamp` en el pipeline) — 10x el original, pero
+sigue siendo un número razonable, no un extremo forzado para que "ande".
+
+Con el fix, el rescate manual por impactos (`--min-hits-occ`) que antes rescataba 30
+celdas ahora rescata solo 8 — tiene sentido, el consenso log-odds ya resuelve solo
+casi todo lo que antes había que parchear a mano. Regeneré `entrega_parte_A/` con el
+fix (misma trayectoria y landmarks — el clamp solo toca la 2da pasada de la grilla).

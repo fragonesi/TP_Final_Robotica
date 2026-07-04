@@ -7,7 +7,7 @@ OJO con el QoS: igual que la odometría, el LIDAR del bag se publica como BEST_E
 si la suscripción pide RELIABLE (default de ROS 2), no se entrega ningún mensaje.
 
 Uso:
-    ros2 run TP_Final_Robotica scan_logger_node --ros-args \
+    ros2 run slam_pkg scan_logger_node --ros-args \
         -p scan_topic:=/tb4_0/scan -p log_csv_path:=scans.csv
 """
 import csv

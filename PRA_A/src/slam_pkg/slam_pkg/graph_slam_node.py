@@ -11,7 +11,7 @@ Se publica en un timer (no una sola vez) para que RViz tome los mensajes aunque
 se conecte tarde.
 
 Uso:
-    ros2 run TP_Final_Robotica graph_slam_node --ros-args \
+    ros2 run slam_pkg graph_slam_node --ros-args \
         -p odom_csv:=/ruta/odom_deltas.csv \
         -p aruco_csv:=/ruta/aruco_detections.csv
 """

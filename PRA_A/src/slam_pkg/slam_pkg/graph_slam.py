@@ -328,7 +328,7 @@ def _noise_obs_info(rng, bearing, nm, scale_unc, bearing_floor):
 # --------------------------------------------------------------------------- #
 def build_from_csv(odom_csv, aruco_csv=None,
                    kf_trans=0.10, kf_rot=np.deg2rad(10),
-                   odom_std=(0.01, 0.01, np.deg2rad(3.0)),    # odom TB4 es muy buena → confiamos fuerte
+                   odom_std=(0.01, 0.01, np.deg2rad(1.0)),    # odom TB4 es muy buena → confiamos fuerte
                    range_std_a=0.40, range_std_b=0.15,        # rango ArUco flojo (fallback sin noise model)
                    bearing_std=np.deg2rad(12),                # bearing flojo (fallback sin noise model)
                    min_detections=10,
