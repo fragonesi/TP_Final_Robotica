@@ -1,5 +1,4 @@
-mapa_completo/scans.csv
-
+# Artefactos de compilación de colcon (regenerables, no se versionan)
 __pycache__/
 *.pyc
 build/

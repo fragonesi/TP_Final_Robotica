@@ -1,6 +1,0 @@
-image: mapa.pgm
-resolution: 0.05
-origin: [-14.370252833847754, -21.1875727364445, 0.0]
-negate: 0
-occupied_thresh: 0.65
-free_thresh: 0.25
