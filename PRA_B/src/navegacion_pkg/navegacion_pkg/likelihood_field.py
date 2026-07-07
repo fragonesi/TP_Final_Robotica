@@ -19,7 +19,7 @@ class LikelihoodMapPublisher(Node):
         """
         Callback function for handling incoming map messages.
         """
-        self.get_logger().info("Recibí mapa")
+        self.get_logger().debug("Recibí mapa")
         prob_msg = OccupancyGrid()
         prob_msg.header = msg.header
         prob_msg.info = msg.info
@@ -36,7 +36,7 @@ class LikelihoodMapPublisher(Node):
         likelihood = np.exp(-distances**2 / (2 * sigma**2))
         prob_msg.data = (likelihood*100).astype(np.int8).flatten().tolist()
         self.pub.publish(prob_msg)
-        self.get_logger().info("Published likelihood map")
+        self.get_logger().debug("Published likelihood map")
 
 
 def main(args=None):

@@ -69,8 +69,9 @@ class RobotNavigator(Node):
         # Detección de obstáculos
         self.last_scan: LaserScan | None = None
         self.obstacle_ahead: bool = False
-        self.OBSTACLE_DISTANCE_THRESHOLD = 0.2
-        self.CONE_HALF_ANGLE = math.radians(45)
+        self.OBSTACLE_DISTANCE_THRESHOLD = 0.30   # margen para reaccionar ANTES de rozar (0.2 ≈ contacto)
+        self.CONE_HALF_ANGLE = math.radians(30)   # cono frontal angosto: sólo lo realmente de frente
+        self.min_front_dist = float('inf')        # última distancia mínima en el cono frontal (WALKING)
 
         # Evasión reactiva
         self.AVOID_ANGULAR_SPEED = 0.5
@@ -106,6 +107,10 @@ class RobotNavigator(Node):
         self.PERSISTENCE_MIN = 3 # filtro temporal: apariciones exigidas
         self.DYNAMIC_INFLATION_RADIUS_CELLS = 4 # inflado del dinámico, separado del estático
         self._hit_history = collections.deque(maxlen=self.PERSISTENCE_WINDOW)
+        # Capa dinámica persistente, actualizada continuamente (no sólo al planear).
+        self.dynamic_cells: np.ndarray | None = None      # celdas dinámicas sin inflar
+        self.dynamic_inflated: np.ndarray | None = None   # ya infladas: las consumen el planeo y la vigilancia del camino
+        self._static_free_mask: np.ndarray | None = None  # True donde el mapa estático inflado está libre
 
 
         # Subscriptores
@@ -132,8 +137,23 @@ class RobotNavigator(Node):
         """
         Message callback for receiving the occupancy grid map. It inflates the map to account for the robot's size and obstacles.
         """
+        # El map_publisher reenvía el MISMO mapa cada ~1s. Si no cambió, evitamos
+        # re-inflar (dilatación cara) y no ensuciamos el log.
+        if (self.map is not None
+                and msg.info.width == self.map.info.width
+                and msg.info.height == self.map.info.height
+                and msg.data == self.map.data):
+            return
+
         self.map = msg
         self.inflated_map = self._inflate_map(msg)
+        # Máscara de espacio libre en el mapa estático inflado. La capa dinámica
+        # sólo considera hits que caen aquí: así los rayos que golpean paredes ya
+        # mapeadas NO se cuentan como obstáculos dinámicos (evita engrosar las
+        # paredes y bloquear la ruta con falsos positivos).
+        info = self.inflated_map.info
+        inflated = np.array(self.inflated_map.data, dtype=np.int8).reshape((info.height, info.width))
+        self._static_free_mask = (inflated == 0)
         self.get_logger().info('Mapa recibido e inflado.')
 
     def cb_pose(self, msg: PoseStamped):
@@ -172,20 +192,12 @@ class RobotNavigator(Node):
             )
             self._scan_debug_printed = True
 
-        # Debug: rayo más cercano (en frame robot)
-        valid_debug = []
-        for i, r in enumerate(msg.ranges):
-            if self.usar_intensidades and msg.intensities and msg.intensities[i] == 0.0:
-                continue
-            if math.isfinite(r) and msg.range_min < r < msg.range_max:
-                robot_angle = msg.angle_min + i * msg.angle_increment + self.offset_lidar_rad
-                valid_debug.append((i, r, robot_angle))
-        if valid_debug:
-            i_min, r_min, a_min = min(valid_debug, key=lambda x: x[1])
-            angle_norm = math.degrees(math.atan2(math.sin(a_min), math.cos(a_min)))
-            self.get_logger().info(
-                f'[SCAN] mín en idx={i_min} ángulo_robot={angle_norm:+.1f}° dist={r_min:.2f}m'
-            )
+        # El aspecto dinámico del mapa se actualiza SIEMPRE (todos los estados),
+        # no sólo al planear: así un replaneo ve lo último del LIDAR y el filtro
+        # temporal de persistencia acumula una ventana real de scans consecutivos.
+        self._update_dynamic_obstacles()
+        # Publicar el mapa de planeo (estático + dinámico) en vivo para RViz.
+        self._publish_planning_map()
 
         # Solo detecto obstáculos en estado WALKING
         if self.state not in (State.WALKING,):
@@ -207,17 +219,19 @@ class RobotNavigator(Node):
 
             if abs(angle_norm) <= self.CONE_HALF_ANGLE:
                 if r > msg.range_min and r < msg.range_max and math.isfinite(r):
+                    # Sin break: recorremos todo el cono para quedarnos con el
+                    # mínimo real (lo necesita el chequeo de emergencia).
                     min_front_dist = min(min_front_dist, r)
                     if r < self.OBSTACLE_DISTANCE_THRESHOLD:
                         obstacle_found = True
-                        break
 
             angle += msg.angle_increment
 
         self.get_logger().info(
             f'[SCAN] min_front={min_front_dist:.2f}m  threshold={self.OBSTACLE_DISTANCE_THRESHOLD}m  found={obstacle_found}',
-            throttle_duration_sec=0.5)
+            throttle_duration_sec=3.0)
 
+        self.min_front_dist = min_front_dist
         self.obstacle_ahead = obstacle_found
 
     def cb_belief(self, msg: PoseArray):
@@ -288,13 +302,7 @@ class RobotNavigator(Node):
             self.get_logger().warn('Faltan datos para planificar.')
             return
         
-        planning_map = self._build_planning_map()
-
-        # Publicarlo para verlo en RViz
-        planning_map.header.stamp = self.get_clock().now().to_msg()
-        if not planning_map.header.frame_id:
-            planning_map.header.frame_id = 'map'
-        self.pub_planning_map.publish(planning_map)
+        planning_map = self._publish_planning_map()
 
         path = self._run_theta_star(self.current_pose, self.goal_pose, planning_map, self.map)
 
@@ -325,9 +333,18 @@ class RobotNavigator(Node):
 
         now = self.get_clock().now().nanoseconds / 1e9
         if now >= self._avoid_cooldown_until and self._obstacle_detected_on_path():
-            self.get_logger().info('Obstáculo no mapeado detectado. Pasando a AVOIDING.')
+            self.get_logger().info('Obstáculo al frente. Pasando a AVOIDING.')
             self._stop_robot()
             self.transition_to(State.AVOIDING)
+            return
+
+        # Replaneo proactivo: si un obstáculo dinámico ya cayó sobre la ruta
+        # (capa mantenida en tiempo real), replaneamos antes de chocar de frente.
+        if now >= self._avoid_cooldown_until and self._planned_path_blocked():
+            self.get_logger().info('Camino bloqueado por obstáculo dinámico. Re-planeando.')
+            self._stop_robot()
+            self._avoid_cooldown_until = now + 1.0
+            self.transition_to(State.PLANNING)
             return
 
         if self._reached_goal_position():
@@ -404,31 +421,30 @@ class RobotNavigator(Node):
             return True
         return False
     
-    def _build_planning_map(self) -> OccupancyGrid:
+    def _update_dynamic_obstacles(self):
         """
-        Inflated static map + dynamic obstacles extracted from laser scans, using
-        two chained noise filters:
-          1)SPATIAL (neighborhood count): a cell containing hits is accepted
-            only if it has at least MIN_NEIGHBOR_HITS occupied neighbors within
-            its 3x3 neighborhood. This removes sparse noise (isolated rays)
-            within a single scan.
- 
-          2)TEMPORAL (persistence): a spatially accepted cell is projected only
-            if it appears in at least PERSISTENCE_MIN of the last
-            PERSISTENCE_WINDOW scans. This removes intermittent noise (cells
-            that flicker over time).
- 
-        A cell is considered blocked only if it is both dense and persistent.
+        Fold the latest LIDAR scan into a persistent grid of dynamic obstacles.
+        Runs on EVERY scan (all states), not only while planning, so a replan
+        always sees the freshest obstacles and the temporal filter accumulates a
+        real window of consecutive scans.
+
+        Two chained noise filters:
+          1) SPATIAL (3x3 neighborhood count): a cell with hits survives only if
+             it has >= MIN_NEIGHBOR_HITS occupied neighbors -> kills isolated
+             rays within a single scan.
+          2) TEMPORAL (persistence): a spatially-accepted cell is kept only if it
+             appears in >= PERSISTENCE_MIN of the last PERSISTENCE_WINDOW scans
+             -> kills flickering cells over time.
+
+        The surviving cells are inflated once and cached in self.dynamic_inflated
+        so that _build_planning_map() and _planned_path_blocked() consume them
+        cheaply (no re-projection, no re-dilation per call).
         """
-        # Partimos siempre del mapa estático inflado (nunca se muta).
-        planning = copy.deepcopy(self.inflated_map)
+        if self.inflated_map is None or self.current_pose is None or self.last_scan is None:
+            return
 
-        if self.last_scan is None or self.current_pose is None:
-            return planning
-
-        info = planning.info
+        info = self.inflated_map.info
         width, height = info.width, info.height
-        data = np.array(planning.data, dtype=np.int8).reshape((height, width))
 
         # Pose del robot en el mundo
         rx = self.current_pose.pose.position.x
@@ -438,35 +454,46 @@ class RobotNavigator(Node):
         scan = self.last_scan
         angle = scan.angle_min
 
-
-        # --- Acumular hits crudos de este scan en una grilla de conteo ---
+        # --- Acumular hits crudos de este scan en una grilla de CONTEO ---
         # Guardamos CUÁNTOS hits caen en cada celda (no un booleano), porque
         # el filtro espacial necesita densidad, no sólo presencia.
         raw_counts = np.zeros((height, width), dtype=np.int32)
 
-        for rng in scan.ranges:
+        for i, rng in enumerate(scan.ranges):
             a = angle
             angle += scan.angle_increment
 
+            # Filtro de intensidades (TB4: descartar lecturas con intensidad 0)
+            if self.usar_intensidades and scan.intensities and scan.intensities[i] == 0.0:
+                continue
             # Descartar lecturas inválidas o fuera de rango útil
             if not math.isfinite(rng):
                 continue
             if rng < scan.range_min or rng > scan.range_max:
                 continue
             # Sólo nos importan obstáculos razonablemente cerca
-            if rng > 3.0:
+            if rng > self.MAX_DYNAMIC_RANGE:
                 continue
 
-            # Punto de impacto en marco del robot -> marco mundo
-            wx = rx + rng * math.cos(ryaw + a)
-            wy = ry + rng * math.sin(ryaw + a)
+            # Punto de impacto en marco del robot -> marco mundo.
+            # Se suma el offset del LIDAR (rplidar del TB4 rotado +90°), igual
+            # que en el resto de las proyecciones. Sin esto, los hits salen
+            # rotados 90° y aparecen como "obstáculos" en espacio abierto.
+            wx = rx + rng * math.cos(ryaw + a + self.offset_lidar_rad)
+            wy = ry + rng * math.sin(ryaw + a + self.offset_lidar_rad)
 
-            cell = self._world_to_grid(wx, wy, planning)
-            if cell is None:
-                continue
-            row, col = cell
-            raw_counts[row, col] = True
+            # Inline (sin _world_to_grid) para no spamear warnings a la tasa del LIDAR.
+            col = int((wx - info.origin.position.x) / info.resolution)
+            row = int((wy - info.origin.position.y) / info.resolution)
+            if 0 <= row < height and 0 <= col < width:
+                raw_counts[row, col] += 1
 
+        # --- MÁSCARA ESTÁTICA: descartar hits sobre paredes ya mapeadas ---
+        # Un rayo que golpea una pared conocida NO es un obstáculo dinámico. Sin
+        # esto, las paredes (persistentes en el scan) llenan la capa dinámica y,
+        # tras inflar, bloquean la ruta con falsos positivos.
+        if self._static_free_mask is not None:
+            raw_counts[~self._static_free_mask] = 0
 
         # --- FILTRO 1: ESPACIAL (conteo por vecindad 3x3) ---
         # Sumamos los hits de cada celda con los de sus 8 vecinas. Una celda
@@ -474,38 +501,108 @@ class RobotNavigator(Node):
         kernel3 = np.ones((3, 3), dtype=np.int32)
         neighbor_sum = convolve2d(raw_counts, kernel3, mode='same')
         spatial_cells = (raw_counts > 0) & (neighbor_sum >= self.MIN_NEIGHBOR_HITS)
- 
-        # --- FILTRO 2: TEMPORAL (persistencia sobre N scans) ---
-        # Empujamos las celdas que pasaron el filtro espacial al historial
-        # y exigimos que una celda aparezca en >= PERSISTENCE_MIN de los
-        # últimos scans para proyectarla.
-        self._hit_history.append(spatial_cells)
 
-        # Sumar cuántas veces apareció cada celda en la ventana temporal
+        # --- FILTRO 2: TEMPORAL (persistencia sobre la ventana de scans) ---
+        # Ahora que esto corre en cada scan, el historial acumula scans
+        # consecutivos reales y el filtro de persistencia sí tiene sentido.
+        self._hit_history.append(spatial_cells)
         appearances = np.zeros((height, width), dtype=np.int32)
         for past in self._hit_history:
             appearances += past.astype(np.int32)
- 
         dynamic_cells = appearances >= self.PERSISTENCE_MIN
 
-        # Inflar los obstáculos dinámicos con el mismo radio que el mapa estático
-        r = self.INFLATION_RADIUS_CELLS
+        # Inflar UNA sola vez con el radio dedicado al dinámico y cachear.
+        r = self.DYNAMIC_INFLATION_RADIUS_CELLS
         y_k, x_k = np.ogrid[-r:r+1, -r:r+1]
         kernel = (x_k**2 + y_k**2) <= r**2
-        dilated = binary_dilation(dynamic_cells, structure=kernel)
-
-        # Marcar como ocupado sólo lo que hoy es libre (no tocar desconocido)
-        data[dilated & (data == 0)] = 100
-
-        planning.data = data.flatten().tolist()
+        self.dynamic_cells = dynamic_cells
+        self.dynamic_inflated = binary_dilation(dynamic_cells, structure=kernel)
 
         self.get_logger().info(
-            f'Planning map: {int((raw_counts > 0).sum())} celdas crudas -> '
-            f'{int(spatial_cells.sum())} tras filtro espacial -> '
-            f'{int(dynamic_cells.sum())} tras persistencia '
-            f'(infladas r={r}).'
-        )
+            f'Dinámico: {int((raw_counts > 0).sum())} celdas crudas -> '
+            f'{int(spatial_cells.sum())} espacial -> '
+            f'{int(dynamic_cells.sum())} persistente (inflado r={r}).',
+            throttle_duration_sec=3.0)
+
+    def _build_planning_map(self) -> OccupancyGrid:
+        """
+        Static inflated map + the latest cached dynamic obstacles
+        (self.dynamic_inflated, maintained continuously by
+        _update_dynamic_obstacles). This function no longer touches the LIDAR;
+        it just merges the current dynamic layer onto a fresh copy of the static
+        map. A cell is blocked only if it survived both the spatial and temporal
+        filters.
+        """
+        # Partimos siempre del mapa estático inflado (nunca se muta).
+        planning = copy.deepcopy(self.inflated_map)
+
+        if self.dynamic_inflated is None:
+            return planning
+
+        info = planning.info
+        width, height = info.width, info.height
+        data = np.array(planning.data, dtype=np.int8).reshape((height, width))
+
+        # Marcar como ocupado sólo lo que hoy es libre (no tocar desconocido).
+        data[self.dynamic_inflated & (data == 0)] = 100
+        planning.data = data.flatten().tolist()
         return planning
+
+    def _publish_planning_map(self) -> OccupancyGrid | None:
+        """
+        Build the current planning map (static + live dynamic layer), publish it
+        to /planning_map for RViz, and return it. Returns None if the static map
+        is not available yet. Called both continuously (from cb_scan) and right
+        before planning.
+        """
+        if self.inflated_map is None:
+            return None
+
+        planning_map = self._build_planning_map()
+        planning_map.header.stamp = self.get_clock().now().to_msg()
+        if not planning_map.header.frame_id:
+            planning_map.header.frame_id = 'map'
+        self.pub_planning_map.publish(planning_map)
+        return planning_map
+
+    def _planned_path_blocked(self) -> bool:
+        """
+        Check whether some waypoint AHEAD on the current path is now covered by a
+        NEW dynamic obstacle, so the robot can replan proactively.
+
+        Two guards avoid spurious replans:
+          - A waypoint counts only if it is a dynamic obstacle on a cell the
+            STATIC map considers free. Mapped walls are persistent in the scan,
+            so comparing against the raw dynamic layer would flag almost every
+            path (paths hug the inflated walls); requiring static-free isolates
+            genuinely new obstacles.
+          - Waypoints within the robot's near field are skipped. There are always
+            returns there (walls the robot legitimately passes, or an obstacle it
+            is already leaving behind); the reactive AVOIDING state covers the
+            immediate front. Only what appears further along the route matters.
+        """
+        if (self.dynamic_inflated is None or not self.planned_path
+                or self.inflated_map is None or self.current_pose is None):
+            return False
+
+        info = self.inflated_map.info
+        rx = self.current_pose.pose.position.x
+        ry = self.current_pose.pose.position.y
+        near_skip = self.DYNAMIC_INFLATION_RADIUS_CELLS * info.resolution + self.LOOKAHEAD_DISTANCE
+
+        for wp in self.planned_path[self.current_waypoint_idx:]:
+            wx = wp.pose.position.x
+            wy = wp.pose.position.y
+            if math.hypot(wx - rx, wy - ry) < near_skip:
+                continue
+            col = int((wx - info.origin.position.x) / info.resolution)
+            row = int((wy - info.origin.position.y) / info.resolution)
+            if not (0 <= row < info.height and 0 <= col < info.width):
+                continue
+            static_val = self.inflated_map.data[row * info.width + col]
+            if self.dynamic_inflated[row, col] and static_val == 0:
+                return True
+        return False
 
     def _line_of_sight(self, grid: OccupancyGrid, r0: int, c0: int, r1: int, c1: int) -> bool:
         """
@@ -674,9 +771,16 @@ class RobotNavigator(Node):
 
     def _obstacle_detected_on_path(self) -> bool:
         """
-        Check if there is an obstacle detected on the planned path using the last LIDAR scan and the inflated map.
+        Trigger reactive avoidance for ANY obstacle physically close in the front
+        cone, whether or not it is in the map. The map is only for PLANNING; the
+        reactive layer exists so the robot never drives into something it can see
+        — including mapped walls it drifts toward. Not reacting here is what let
+        it graze walls, and the collision then corrupted localization.
+
+        (Whether an obstacle is *new* still matters, but only for the proactive
+        replan via the dynamic layer — see _planned_path_blocked.)
         """
-        return self.obstacle_ahead and self._obstacle_is_unmapped()
+        return self.obstacle_ahead
 
     def _obstacle_is_unmapped(self) -> bool:
         """

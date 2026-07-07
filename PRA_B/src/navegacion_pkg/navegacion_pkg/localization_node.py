@@ -84,7 +84,7 @@ class LocalizationNode(Node):
         Callback function for handling map messages.
         """
         self.map = msg
-        self.get_logger().info("Mapa recibido")
+        self.get_logger().debug("Mapa recibido")
 
     def likelihood_callback(self, msg):
         """
@@ -93,7 +93,7 @@ class LocalizationNode(Node):
         h = msg.info.height
         w = msg.info.width
         self.likelihood = np.array(msg.data).reshape(h, w)
-        self.get_logger().info("Likelihood recibido")
+        self.get_logger().debug("Likelihood recibido")
 
     def initialpose_callback(self, msg):
         """
