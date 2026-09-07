@@ -25,17 +25,13 @@ su carpeta):
 
 ```
 TP_Final_Robotica/
-├── PRA_A/                         ← Parte A: percepción + SLAM
-│   ├── src/
-│   │   ├── aruco_pkg/             ← detección ArUco, pose por solvePnP, odometría (deltas), modelo de ruido
-│   │   └── slam_pkg/              ← Graph SLAM (batch LM + keyframes + loop closure) y grilla de ocupación
-│   └── entrega_parte_A/          ← ENTREGABLES de la Parte A (mapa, landmarks, trayectoria)
-├── PRA_B/                         ← Parte B: navegación (simulación TB3)
-│   └── src/navegacion_pkg/       ← FSM + Theta* + Pure Pursuit + filtro de partículas
-├── PRA_C/                         ← Parte C: despliegue en TB4 real
-│   └── src/
-│       ├── deploy_pkg/           ← FSM extendida + localización adaptada al TB4
-│       └── cono_detector_pkg/   ← detector de conos rojos (HSV + fusión LIDAR)
+├── src/
+│   ├── aruco_pkg/             ← detección ArUco, pose por solvePnP, odometría (deltas), modelo de ruido
+│   ├── slam_pkg/              ← Graph SLAM (batch LM + keyframes + loop closure) y grilla de ocupación
+│   ├── navegacion_pkg/       ← FSM + Theta* + Pure Pursuit + filtro de partículas
+│   ├── deploy_pkg/           ← FSM extendida + localización adaptada al TB4
+│   └── cono_detector_pkg/   ← detector de conos rojos (HSV + fusión LIDAR)
+├── entrega_parte_A/          ← ENTREGABLES de la Parte A (mapa, landmarks, trayectoria)
 ├── Informe_TP_Final_Robotica.pdf  ← informe técnico (documenta A, B y C)
 └── README.md                      ← este archivo
 ```
